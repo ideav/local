@@ -47,7 +47,7 @@ $locale = isset($_COOKIE[$z . "_locale"]) ? $_COOKIE[$z . "_locale"] : (isset($_
 if (isset($_REQUEST["TRACE_IT"])) {
 	$GLOBALS["TRACE"] = "****" . $_SERVER["REQUEST_URI"] . "<br/>\n";
 	if (isset($_GET["TRACE_IT"]))
-		setcookie("TRACE_IT", 1, 0, "/", httponly: true);
+		setcookie("TRACE_IT", 1, 0, "/");
 }
 $params = "";
 foreach ($_POST as $key => $value)
@@ -132,7 +132,7 @@ function updateTokens($row)
 	global $z;
 	$token = $GLOBALS["GLOBAL_VARS"]["token"] = md5(microtime(TRUE));
 	$xsrf  = $GLOBALS["GLOBAL_VARS"]["xsrf"] = xsrf($token, $z);
-	setcookie($z, $token, time() + 2592000 * 12, "/", httponly: false);
+	setcookie($z, $token, time() + 2592000 * 12, "/");
 	if ($row["tok"])
 		Update_Val($row["tok"], $token);
 	else
