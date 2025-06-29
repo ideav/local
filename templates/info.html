@@ -1,0 +1,37 @@
+<div id="frame" style="max-width:1050px;">
+<h2><t9n>[RU]Интеграл приветствует вас![EN]IdeaV welcomes you!</t9n></h2>
+<p><t9n>[RU]Рекомендую для начала посмотреть <a target="_blank" href="https://youtu.be/P2KQ5VA4L7Y">обзорный ролик</a> по возможностям сервиса.
+    [EN]We recommend first to watch a <a target="_blank" href="https://www.youtube.com/watch?v=HRDTs3JPvOc">short video</a> about a basic set of Ideav's functionality.</t9n></p>
+<p><t9n>[RU]Далее я предлагаю вам пройти интерактивные уроки, чтобы самостоятельно повторить всё то, что было показано в ролике, и даже больше:
+    [EN]Next, I suggest that you go through interactive lessons in order to repeat by yourself everything that was shown in the video, and even more:</t9n></p>
+<ul>
+    <li><a href="#" onclick="setQip('overview')" class="bg-warning" id="start"><t9n>[RU]Обзорная экскурсия по Интегралу (8-10 минут)[EN]Quick tour of Ideav (8-10 mins)</t9n></a></li>
+    <li><a href="#" onclick="setQip('upload')"><t9n>[RU]Создание простых таблиц загрузкой файла (10 минут)[EN]Import of simple tables using file upload (10 mins)</t9n></a></li>
+    <li><a href="#" onclick="setQip('tasks')"><t9n>[RU]Структура данных Планировщика задач (10-20 минут)[EN]Create a data structure for a Tasks planner (10-20 mins)</t9n></a></li>
+</ul>
+<p><a style="border-bottom: 1px dashed;" class="welcome" href="#" onclick="$('.welcome').toggle(100)"><t9n>[RU]Вы новичок в ИТ?[EN]Are you new to programming?</t9n></a></p>
+<div class="alert alert-warning welcome" style="display:none">
+    <t9n>[RU]Пара полезных советов по&nbsp;интерактивным урокам[EN]A couple of&nbsp;tips that might be&nbsp;useful</t9n>:
+    <ol>
+        <li><t9n>[RU]Не всё будет идти гладко, иногда придётся остановиться и&nbsp;искать проблему. Так в&nbsp;любом программироваии, будь&nbsp;то с&nbsp;кодом или без.
+            [EN]Something always goes unexpected way, thus you have to&nbsp;stop and resolve the problem. That&rsquo;s the law of&nbsp;programming, whether with or&nbsp;without code.</t9n>
+        </li>
+        <li><t9n>[RU]Если что-то пошло не&nbsp;так, попробуйте просто обновить страницу (F5&nbsp;в Windows, Command+R в&nbsp;маках), это часто помогает.
+            [EN]In case something went wrong, try refreshing the page (F5&nbsp;in&nbsp;Windows, Command+R in&nbsp;macs), it&nbsp;often helps.</t9n>
+        </li>
+    </ol>
+    <t9n>[RU]Хорошая новость: если вы&nbsp;прошли урок до&nbsp;конца, то&nbsp;у&nbsp;вас нет противопоказаний продолжать развитие в&nbsp;ИТ.
+        [EN]Good news: if&nbsp;you managed to&nbsp;complete the lesson, highly likely, you have no&nbsp;contraindications to&nbsp;continue the growth in&nbsp;IT.
+    </t9n>
+</div>
+<p><t9n>[RU]Затем вы можете изучить <a href="https://help.ideav.pro">Руководство разработчика</a> и посмотреть <a target="_blank" href="https://www.youtube.com/channel/UCwycC92C9FIJjm62aO0unIQ/videos">Обучающие ролики партнеров сервиса</a>, после чего вы сможете делать приложения любой сложности.[EN]</t9n></p>
+</div><!--/Frame-->
+<script>
+if(document.documentElement.clientWidth>700)
+    $('#frame').css('margin','20px');
+$('#start').attr('title',t9n('[RU]Начните здесь![EN]Start here!'));
+function setQip(q){
+    document.cookie='_qip='+(_qip=q)+';Path=/'+db+'; max-age=31622400;';
+    document.location.reload();
+}
+</script>
