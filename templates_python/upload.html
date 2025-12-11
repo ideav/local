@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block title %}Upload File - IdeaV{% endblock %}
+
+{% block content %}
+<div class="upload-page">
+    <h2>Upload File</h2>
+
+    <form method="post" enctype="multipart/form-data">
+        <div class="form-group">
+            <label for="file">Select file:</label>
+            <input type="file" id="file" name="file" required class="form-control">
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Upload</button>
+            <a href="/{{ db_name }}" class="btn btn-secondary">Cancel</a>
+        </div>
+    </form>
+
+    <div class="info">
+        <h3>Allowed File Types</h3>
+        <p>You can upload any file type except: php, cgi, pl, fcgi, fpl, phtml, shtml, php2, php3, php4, php5, asp, jsp</p>
+    </div>
+</div>
+
+<style>
+    .upload-page {
+        padding: 20px;
+        max-width: 600px;
+        margin: 0 auto;
+    }
+    .form-group {
+        margin-bottom: 20px;
+    }
+    .form-group label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+    }
+    .form-control {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 14px;
+    }
+    .form-actions {
+        margin-top: 30px;
+    }
+    .btn {
+        display: inline-block;
+        padding: 10px 20px;
+        margin: 5px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        text-decoration: none;
+    }
+    .btn-primary {
+        background: #1976d2;
+        color: white;
+    }
+    .btn-secondary {
+        background: #757575;
+        color: white;
+    }
+    .info {
+        margin-top: 30px;
+        padding: 15px;
+        background: #f5f5f5;
+        border-radius: 4px;
+    }
+    .info h3 {
+        margin-top: 0;
+    }
+</style>
+{% endblock %}
