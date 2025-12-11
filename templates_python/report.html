@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block title %}Report {{ report.id }} - IdeaV{% endblock %}
+
+{% block content %}
+<div class="report-view">
+    <h2>Report: {{ report.val }}</h2>
+
+    {% if results %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                {% for col in results[0].keys() %}
+                <th>{{ col }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in results %}
+            <tr>
+                {% for value in row.values() %}
+                <td>{{ value }}</td>
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p>No results found.</p>
+    {% endif %}
+
+    <div class="actions">
+        <a href="/{{ db_name }}" class="btn btn-secondary">Back</a>
+    </div>
+</div>
+
+<style>
+    .report-view {
+        padding: 20px;
+    }
+    .data-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0;
+    }
+    .data-table th,
+    .data-table td {
+        border: 1px solid #ddd;
+        padding: 8px;
+        text-align: left;
+    }
+    .data-table th {
+        background: #f5f5f5;
+        font-weight: bold;
+    }
+    .data-table tr:hover {
+        background: #f9f9f9;
+    }
+    .btn {
+        display: inline-block;
+        padding: 10px 20px;
+        margin: 5px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        text-decoration: none;
+    }
+    .btn-secondary {
+        background: #757575;
+        color: white;
+    }
+</style>
+{% endblock %}

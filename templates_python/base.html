@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}IdeaV - Local{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>IdeaV - Local Database Manager</h1>
+            {% if db_name %}
+            <div class="db-info">Database: <strong>{{ db_name }}</strong></div>
+            {% endif %}
+        </header>
+
+        <nav>
+            {% if session.user_id %}
+            <ul>
+                <li><a href="{{ url_for('index', db_name=db_name) }}">Home</a></li>
+                <li><a href="{{ url_for('upload_file', db_name=db_name) }}">Upload</a></li>
+                <li><a href="/{{ db_name }}/object/18">Users</a></li>
+                <li>User: {{ session.user_name }}</li>
+            </ul>
+            {% endif %}
+        </nav>
+
+        <main>
+            {% block content %}{% endblock %}
+        </main>
+
+        <footer>
+            <p>&copy; 2024 IdeaV - Python Version</p>
+        </footer>
+    </div>
+
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}Main - IdeaV{% endblock %}
+
+{% block content %}
+<div class="main-page">
+    <h2>Welcome to IdeaV Local Database Manager</h2>
+
+    <div class="actions">
+        <h3>Quick Actions</h3>
+        <ul>
+            <li><a href="/{{ db_name }}/object/18">View Users</a></li>
+            <li><a href="/{{ db_name }}/upload">Upload Files</a></li>
+            <li><a href="/{{ db_name }}/object/22">Reports</a></li>
+        </ul>
+    </div>
+
+    <div class="info">
+        <p>This is a Python/Flask version of the IdeaV local database management system.</p>
+        <p>Use the navigation menu to access different features.</p>
+    </div>
+</div>
+{% endblock %}
