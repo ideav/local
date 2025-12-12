@@ -14,6 +14,7 @@ from utils import (
     get_subdir, get_filename, write_log, generate_token,
     xsrf_token, t9n, builtin_value, format_date
 )
+from permissions import PermissionSystem, PermissionError, get_permission_system
 
 app = Flask(__name__, template_folder='templates_python')
 app.config.from_object(Config)
@@ -74,10 +75,21 @@ def view_object(db_name, obj_id):
     if not verify_auth(db_name):
         return redirect(url_for('login_page', db=db_name))
 
+    # Get permission system
+    perm_sys = get_permission_system(db_name)
+    if not perm_sys:
+        return redirect(url_for('login_page', db=db_name))
+
     with Database(db_name) as db:
         obj = db.get_record(db_name, obj_id)
         if not obj:
             return "Object not found", 404
+
+        # Check permission for READ access
+        try:
+            perm_sys.check_grant(obj_id, obj.get('t', 0), "READ", fatal=True)
+        except PermissionError as e:
+            return str(e), 403
 
         # Get object children
         children = db.get_records(db_name, {'up': obj_id})
@@ -94,6 +106,11 @@ def edit_object(db_name, obj_id):
     if not verify_auth(db_name):
         return redirect(url_for('login_page', db=db_name))
 
+    # Get permission system
+    perm_sys = get_permission_system(db_name)
+    if not perm_sys:
+        return redirect(url_for('login_page', db=db_name))
+
     with Database(db_name) as db:
         if request.method == 'POST':
             # Handle form submission
@@ -101,8 +118,14 @@ def edit_object(db_name, obj_id):
             if not obj:
                 return "Object not found", 404
 
+            # Check permission for WRITE access
+            try:
+                perm_sys.check_grant(obj_id, obj.get('t', 0), "WRITE", fatal=True)
+            except PermissionError as e:
+                return str(e), 403
+
             # Check if metadata (cannot edit)
-            if obj['up'] == 0:
+            if not perm_sys.can_edit_metadata(obj):
                 return "Cannot update meta-data", 403
 
             # Update object value
@@ -239,14 +262,25 @@ def delete_object(db_name, obj_id):
     if not verify_auth(db_name):
         return redirect(url_for('login_page', db=db_name))
 
+    # Get permission system
+    perm_sys = get_permission_system(db_name)
+    if not perm_sys:
+        return redirect(url_for('login_page', db=db_name))
+
     with Database(db_name) as db:
         obj = db.get_record(db_name, obj_id)
         if not obj:
             return "Object not found", 404
 
+        # Check permission for WRITE access
+        try:
+            perm_sys.check_grant(obj_id, obj.get('t', 0), "WRITE", fatal=True)
+        except PermissionError as e:
+            return str(e), 403
+
         # Check if metadata (cannot delete)
         parent = db.get_record(db_name, obj['up'])
-        if parent and parent['up'] == 0:
+        if not perm_sys.can_delete_metadata(parent):
             return t9n("[RU]Нельзя удалить метаданные[EN]You can't delete metadata"), 403
 
         # Delete object and its children
@@ -257,7 +291,19 @@ def delete_object(db_name, obj_id):
 
 @app.route('/api/<db_name>/objects', methods=['GET', 'POST'])
 def api_objects(db_name):
-    """API endpoint for objects with filtering support"""
+    """API endpoint for objects"""
+    # Get permission system from token in header or cookie
+    token = request.headers.get('X-Authorization') or request.cookies.get(db_name)
+    if not token:
+        return jsonify({'error': 'Authentication required'}), 401
+
+    perm_sys = PermissionSystem(db_name)
+    try:
+        if not perm_sys.validate_token(token):
+            return jsonify({'error': 'Invalid token'}), 401
+    except PermissionError as e:
+        return jsonify({'error': str(e)}), 403
+
     if request.method == 'GET':
         with Database(db_name) as db:
             limit = request.args.get('limit', Config.DEFAULT_LIMIT, type=int)
@@ -318,6 +364,14 @@ def api_objects(db_name):
 
     elif request.method == 'POST':
         data = request.get_json()
+
+        # Check permission for WRITE access
+        try:
+            parent_id = data.get('up', 1)
+            perm_sys.check_grant(parent_id, data.get('t', 3), "WRITE", fatal=True)
+        except PermissionError as e:
+            return jsonify({'error': str(e)}), 403
+
         with Database(db_name) as db:
             record_id = db.insert(
                 db_name,
@@ -332,11 +386,30 @@ def api_objects(db_name):
 @app.route('/api/<db_name>/objects/<int:obj_id>', methods=['GET', 'PUT', 'DELETE'])
 def api_object(db_name, obj_id):
     """API endpoint for single object"""
+    # Get permission system from token in header or cookie
+    token = request.headers.get('X-Authorization') or request.cookies.get(db_name)
+    if not token:
+        return jsonify({'error': 'Authentication required'}), 401
+
+    perm_sys = PermissionSystem(db_name)
+    try:
+        if not perm_sys.validate_token(token):
+            return jsonify({'error': 'Invalid token'}), 401
+    except PermissionError as e:
+        return jsonify({'error': str(e)}), 403
+
     with Database(db_name) as db:
         if request.method == 'GET':
             obj = db.get_record(db_name, obj_id)
             if not obj:
                 return jsonify({'error': 'Object not found'}), 404
+
+            # Check permission for READ access
+            try:
+                perm_sys.check_grant(obj_id, obj.get('t', 0), "READ", fatal=True)
+            except PermissionError as e:
+                return jsonify({'error': str(e)}), 403
+
             return jsonify(obj)
 
         elif request.method == 'PUT':
@@ -344,6 +417,12 @@ def api_object(db_name, obj_id):
             obj = db.get_record(db_name, obj_id)
             if not obj:
                 return jsonify({'error': 'Object not found'}), 404
+
+            # Check permission for WRITE access
+            try:
+                perm_sys.check_grant(obj_id, obj.get('t', 0), "WRITE", fatal=True)
+            except PermissionError as e:
+                return jsonify({'error': str(e)}), 403
 
             if 'val' in data:
                 db.update_val(db_name, obj_id, data['val'])
@@ -354,6 +433,12 @@ def api_object(db_name, obj_id):
             obj = db.get_record(db_name, obj_id)
             if not obj:
                 return jsonify({'error': 'Object not found'}), 404
+
+            # Check permission for WRITE access
+            try:
+                perm_sys.check_grant(obj_id, obj.get('t', 0), "WRITE", fatal=True)
+            except PermissionError as e:
+                return jsonify({'error': str(e)}), 403
 
             db.delete(db_name, obj_id)
             return jsonify({'success': True})
@@ -366,21 +451,18 @@ def verify_auth(db_name):
 
 
 def verify_token(db_name, token):
-    """Verify authentication token"""
+    """Verify authentication token and load permissions"""
     try:
-        with Database(db_name) as db:
-            # Find user with this token
-            query = f"""
-                SELECT u.id as uid, u.val as username, t.id as tok
-                FROM `{db_name}` u
-                JOIN `{db_name}` t ON t.up = u.id AND t.t = {Config.TOKEN}
-                WHERE u.t = {Config.USER} AND t.val = %s
-            """
-            result = db.execute_one(query, (token,))
-            if result:
-                session['user_id'] = result['uid']
-                session['user_name'] = result['username']
-                return True
+        # Use new permission system
+        perm_sys = PermissionSystem(db_name)
+        if perm_sys.validate_token(token):
+            # Store permission system in session
+            session['permission_system'] = perm_sys
+            session['db_name'] = db_name
+            return True
+    except PermissionError as e:
+        write_log(f"Permission error: {e}", "error", db_name)
+        return False
     except Exception as e:
         write_log(f"Token verification error: {e}", "error", db_name)
 
