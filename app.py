@@ -133,6 +133,42 @@ def edit_object(db_name, obj_id):
             if new_val != obj['val']:
                 db.update_val(db_name, obj_id, new_val)
 
+            # Get reference types for field processing
+            from utils import get_reference_types, get_field_base_type
+            ref_types = get_reference_types(db, db_name)
+
+            # Handle child field updates
+            children = db.get_records(db_name, {'up': obj_id})
+            for child in children:
+                field_type = child['t']
+                form_key = f't{field_type}'
+
+                if form_key in request.form:
+                    new_value = request.form.get(form_key, '')
+
+                    # Check if this is a reference field
+                    if field_type in ref_types:
+                        # For reference fields, the value is the referenced object ID
+                        # It's stored in the 't' column, not 'val'
+                        if new_value and new_value.isdigit():
+                            new_ref_id = int(new_value)
+                            if new_ref_id != child['t']:
+                                # Update the reference by changing the 't' value
+                                query = f"UPDATE `{db_name}` SET t = %s WHERE id = %s"
+                                db.execute(query, (new_ref_id, child['id']), commit=True)
+                    else:
+                        # Regular field - update the value
+                        if new_value != child['val']:
+                            db.update_val(db_name, child['id'], new_value)
+
+                # Handle boolean fields
+                if f'b{field_type}' in request.form:
+                    # Checkbox was in the form
+                    is_checked = form_key in request.form
+                    bool_val = '1' if is_checked else '0'
+                    if bool_val != child['val']:
+                        db.update_val(db_name, child['id'], bool_val)
+
             # Handle file uploads
             for key, file in request.files.items():
                 if file and file.filename:
@@ -150,10 +186,119 @@ def edit_object(db_name, obj_id):
         # Get object children for editing
         children = db.get_records(db_name, {'up': obj_id})
 
+        # Get reference type mappings
+        from utils import get_reference_types, get_field_base_type
+        ref_types = get_reference_types(db, db_name)
+
+        # Enrich children with field information
+        for child in children:
+            # For reference fields, val contains the field type ID, t contains the referenced object ID
+            # For regular fields, t contains the field type, val contains the value
+
+            # Determine if this is a metadata field definition (child of type definition)
+            parent_rec = db.get_record(db_name, child['up'])
+            is_metadata_field = parent_rec and parent_rec.get('up', 0) == 0
+
+            if is_metadata_field:
+                # This is a field definition, not an actual field value
+                field_type = int(child['val']) if child['val'].isdigit() else child['t']
+            else:
+                field_type = child['t']
+
+            child['base_type'] = get_field_base_type(db, db_name, field_type)
+            child['field_type'] = field_type
+
+            # If this is a reference field, load the reference options
+            if field_type in ref_types:
+                target_type = ref_types[field_type]
+                child['ref_target_type'] = target_type
+
+                # For reference fields, the actual reference is stored in child['t']
+                # child['val'] stores the field type ID
+                if child['t'] > 0 and child['t'] != field_type:
+                    ref_value_id = child['t']
+                    child['ref_value_id'] = ref_value_id
+
+                    # Get the referenced object's value to display
+                    ref_obj = db.get_record(db_name, ref_value_id)
+                    if ref_obj:
+                        child['ref_display_val'] = ref_obj.get('val', '')
+                else:
+                    child['ref_value_id'] = None
+                    child['ref_display_val'] = ''
+
+                # Load available reference options (limit to prevent huge lists)
+                search_param = request.args.get(f'SEARCH_{field_type}', '')
+                if search_param:
+                    # Filter by search
+                    query = f"""
+                        SELECT id, val FROM `{db_name}`
+                        WHERE t = %s AND val LIKE %s
+                        ORDER BY val
+                        LIMIT 50
+                    """
+                    ref_options = db.execute(query, (target_type, f'%{search_param}%'))
+                else:
+                    # Load first 50 options
+                    query = f"""
+                        SELECT id, val FROM `{db_name}`
+                        WHERE t = %s
+                        ORDER BY val
+                        LIMIT 50
+                    """
+                    ref_options = db.execute(query, (target_type,))
+
+                child['ref_options'] = ref_options or []
+
+        # Get field type name
+        type_obj = db.get_record(db_name, obj['t'])
+        obj['type_name'] = type_obj.get('val', 'Object') if type_obj else 'Object'
+
         return render_template('edit_obj.html',
                              obj=obj,
                              children=children,
-                             db_name=db_name)
+                             db_name=db_name,
+                             session=session)
+
+
+@app.route('/<db_name>/api/ref_search/<int:target_type>')
+def ref_search(db_name, target_type):
+    """AJAX endpoint for searching reference options"""
+    if not verify_auth(db_name):
+        return jsonify({"error": "Not authorized"}), 403
+
+    search_term = request.args.get('q', '')
+
+    with Database(db_name) as db:
+        if search_term:
+            # Search for matching objects
+            query = f"""
+                SELECT id, val FROM `{db_name}`
+                WHERE t = %s AND val LIKE %s
+                ORDER BY val
+                LIMIT 50
+            """
+            results = db.execute(query, (target_type, f'%{search_term}%'))
+        else:
+            # Return first 50 objects
+            query = f"""
+                SELECT id, val FROM `{db_name}`
+                WHERE t = %s
+                ORDER BY val
+                LIMIT 50
+            """
+            results = db.execute(query, (target_type,))
+
+        # Format results for autocomplete
+        options = []
+        if results:
+            for row in results:
+                options.append({
+                    'id': row['id'],
+                    'val': row['val']
+                })
+
+        return jsonify(options)
 
 
 @app.route('/<db_name>/report/<int:report_id>')
