@@ -15,6 +15,7 @@ from utils import (
     xsrf_token, t9n, builtin_value, format_date
 )
 from permissions import PermissionSystem, PermissionError, get_permission_system
+from export_import import ExportImport
 
 app = Flask(__name__, template_folder='templates_python')
 app.config.from_object(Config)
@@ -254,6 +255,188 @@ def download_file(db_name, file_id):
         physical_filename = get_filename(file_id) + '.' + ext
 
         return send_from_directory(subdir, physical_filename, as_attachment=True, download_name=filename)
+
+
+@app.route('/<db_name>/export/bki/<int:obj_id>')
+def export_bki(db_name, obj_id):
+    """Export object data in BKI format"""
+    if not verify_auth(db_name):
+        return redirect(url_for('login_page', db=db_name))
+
+    # Get permission system
+    perm_sys = get_permission_system(db_name)
+    if not perm_sys:
+        return redirect(url_for('login_page', db=db_name))
+
+    # Check EXPORT permission
+    try:
+        if not perm_sys.check_grant(obj_id, obj_id, "EXPORT", fatal=False):
+            user = session.get('user_name', '')
+            if user not in ('admin', db_name):
+                return t9n("[RU]У вас нет прав на выгрузку объектов этого типа[EN]You do not have access to export this type of object"), 403
+    except Exception:
+        pass
+
+    # Create exporter and export
+    exporter = ExportImport(db_name)
+    try:
+        bki_content = exporter.export_bki(obj_id)
+
+        # Create response with BKI file
+        from flask import Response
+        response = Response(bki_content, mimetype='application/octet-stream')
+        response.headers['Content-Disposition'] = 'attachment; filename=data_export.bki'
+        response.headers['Content-Type'] = 'application/force-download'
+        response.headers['Content-Transfer-Encoding'] = 'binary'
+
+        return response
+    finally:
+        exporter.close()
+
+
+@app.route('/<db_name>/export/csv/<int:obj_id>')
+def export_csv(db_name, obj_id):
+    """Export object data in CSV format"""
+    if not verify_auth(db_name):
+        return redirect(url_for('login_page', db=db_name))
+
+    # Get permission system
+    perm_sys = get_permission_system(db_name)
+    if not perm_sys:
+        return redirect(url_for('login_page', db=db_name))
+
+    # Check EXPORT permission
+    try:
+        if not perm_sys.check_grant(obj_id, obj_id, "EXPORT", fatal=False):
+            user = session.get('user_name', '')
+            if user not in ('admin', db_name):
+                return t9n("[RU]У вас нет прав на выгрузку объектов этого типа[EN]You do not have access to export this type of object"), 403
+    except Exception:
+        pass
+
+    # Get object data
+    with Database(db_name) as db:
+        # Get object type info
+        obj_type = db.get_record(db_name, obj_id)
+        if not obj_type:
+            return "Object type not found", 404
+
+        # Get headers (field names)
+        headers = [obj_type.get('val', 'Value')]
+
+        # Get field definitions for this type
+        fields_query = f"""
+            SELECT req.id, req.val
+            FROM `{db_name}` req
+            WHERE req.up = %s
+            ORDER BY req.ord
+        """
+        fields = db.execute(fields_query, (obj_id,))
+        for field in fields:
+            headers.append(field['val'])
+
+        # Get all data rows
+        data_rows = []
+        objects_query = f"""
+            SELECT id, val FROM `{db_name}`
+            WHERE t = %s AND up != 0
+            ORDER BY ord
+        """
+        objects = db.execute(objects_query, (obj_id,))
+
+        for obj in objects:
+            row = [obj['val']]
+
+            # Get field values for this object
+            for field in fields:
+                field_query = f"""
+                    SELECT val FROM `{db_name}`
+                    WHERE up = %s AND t = %s
+                """
+                field_val = db.execute_one(field_query, (obj['id'], field['id']))
+                row.append(field_val['val'] if field_val else '')
+
+            data_rows.append(row)
+
+    # Create exporter and export
+    exporter = ExportImport(db_name)
+    try:
+        csv_content = exporter.export_csv(obj_id, headers, data_rows)
+
+        # Create response with CSV file
+        from flask import Response
+        response = Response(csv_content, mimetype='text/csv')
+        response.headers['Content-Disposition'] = 'attachment; filename=data_export.csv'
+        response.headers['Content-Type'] = 'application/force-download'
+
+        return response
+    finally:
+        exporter.close()
+
+
+@app.route('/<db_name>/import/bki/<int:obj_id>', methods=['GET', 'POST'])
+def import_bki(db_name, obj_id):
+    """Import object data from BKI format"""
+    if not verify_auth(db_name):
+        return redirect(url_for('login_page', db=db_name))
+
+    # Get permission system
+    perm_sys = get_permission_system(db_name)
+    if not perm_sys:
+        return redirect(url_for('login_page', db=db_name))
+
+    if request.method == 'POST':
+        # Check EXPORT permission (import uses EXPORT permission in PHP)
+        try:
+            if not perm_sys.check_grant(obj_id, obj_id, "EXPORT", fatal=False):
+                user = session.get('user_name', '')
+                if user not in ('admin', db_name):
+                    return t9n("[RU]У вас нет прав на загрузку объектов этого типа[EN]You do not have access to import this type of object"), 403
+        except Exception:
+            pass
+
+        # Check for uploaded file
+        if 'bki_file' not in request.files:
+            return t9n("[RU]Выберите файл[EN]Please select a file"), 400
+
+        file = request.files['bki_file']
+        if file.filename == '':
+            return t9n("[RU]Выберите файл[EN]Please select a file"), 400
+
+        # Check file size (4MB limit)
+        max_size = 4194304
+        file.seek(0, 2)  # Seek to end
+        file_size = file.tell()
+        file.seek(0)  # Seek back to start
+
+        if file_size > max_size:
+            return t9n(f"[RU]Ошибка. Максимальный размер файла: {max_size} Б[EN]The maximum file size is {max_size} B"), 400
+
+        # Read file content
+        try:
+            content = file.read().decode('utf-8')
+        except UnicodeDecodeError:
+            # Try with BOM
+            file.seek(0)
+            content = file.read().decode('utf-8-sig')
+
+        # Get parent ID from request
+        parent_id = int(request.form.get('parent_id', 1))
+
+        # Import data
+        importer = ExportImport(db_name)
+        try:
+            success, message = importer.import_bki(content, parent_id)
+
+            if success:
+                return redirect(url_for('view_object', db_name=db_name, obj_id=obj_id))
+            else:
+                return message, 400
+        finally:
+            importer.close()
+
+    # GET request - show import form
+    return render_template('import_bki.html', db_name=db_name, obj_id=obj_id)
 
 
 @app.route('/<db_name>/_m_del/<int:obj_id>', methods=['POST'])
