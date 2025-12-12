@@ -48,31 +48,54 @@ input[type=checkbox] {
 
     <div class="form-row no-gutters">
     {% for child in children %}
-        <label for="t{{ child.t }}">Field {{ child.t }}</label>
+        <label for="t{{ child.field_type }}">Field {{ child.field_type }}</label>
 
-        {% if child.t == 10 %}
+        {% if child.base_type == 'REFERENCE' %}
+        <!-- Reference field with autocomplete -->
+        <div class="comp-control pb-3 col-12 col-sm-8 col-md-6">
+            <div class="form-group" style="display: flex; margin-bottom: 0">
+                <select id="t{{ child.field_type }}" name="t{{ child.field_type }}" class="form-control ref-select" data-target-type="{{ child.ref_target_type }}" data-field-type="{{ child.field_type }}">
+                    <option value=""> </option>
+                    {% if child.ref_value_id %}
+                    <option value="{{ child.ref_value_id }}" selected>{{ child.ref_display_val }}</option>
+                    {% endif %}
+                    {% for option in child.ref_options %}
+                    {% if option.id != child.ref_value_id %}
+                    <option value="{{ option.id }}">{{ option.val }}</option>
+                    {% endif %}
+                    {% endfor %}
+                </select>
+                <input class="form-control ml-2 ref-search" type="text" placeholder="Search..." data-field-type="{{ child.field_type }}" data-target-type="{{ child.ref_target_type }}">
+            </div>
+            {% if child.ref_value_id %}
+            <div class="mt-1">
+                <a href="/{{ db_name }}/edit_obj/{{ child.ref_value_id }}" target="_blank" class="text-sm">→ View {{ child.ref_display_val }}</a>
+            </div>
+            {% endif %}
+        </div>
+        {% elif child.base_type == 'FILE' or child.field_type == 10 %}
         <!-- File field -->
         <div class="pb-3 col-12 col-sm-9 col-md-6 pt-1">
             {% if child.val %}
-            <span class="file-{{ child.t }}">Current: {{ child.val }}</span>
+            <span class="file-{{ child.field_type }}">Current: {{ child.val }}</span>
             {% endif %}
-            <input class="form-control-file mt-2" type="file" id="t{{ child.t }}" name="t{{ child.t }}">
+            <input class="form-control-file mt-2" type="file" id="t{{ child.field_type }}" name="t{{ child.field_type }}">
         </div>
-        {% elif child.t == 11 %}
+        {% elif child.base_type == 'BOOLEAN' or child.field_type == 11 %}
         <!-- Checkbox field -->
         <div class="comp-control pb-3 col-6 col-sm-4 col-md-3">
-            <input class="form-control" type="checkbox" id="t{{ child.t }}" name="t{{ child.t }}" value="1" {% if child.val %}checked{% endif %}/>
-            <input type="hidden" name="b{{ child.t }}" value="1">
+            <input class="form-control" type="checkbox" id="t{{ child.field_type }}" name="t{{ child.field_type }}" value="1" {% if child.val %}checked{% endif %}/>
+            <input type="hidden" name="b{{ child.field_type }}" value="1">
         </div>
-        {% elif child.t == 12 %}
+        {% elif child.base_type == 'MEMO' or child.field_type == 12 %}
         <!-- Textarea field -->
         <div class="comp-control pb-3 col-12">
-            <TEXTAREA class="form-control" id="t{{ child.t }}" name="t{{ child.t }}" rows="5">{{ child.val }}</TEXTAREA>
+            <TEXTAREA class="form-control" id="t{{ child.field_type }}" name="t{{ child.field_type }}" rows="5">{{ child.val }}</TEXTAREA>
         </div>
         {% else %}
         <!-- Default text field -->
         <div class="comp-control pb-3 col-12 col-sm-4 col-md-3">
-            <input class="form-control" type="text" id="t{{ child.t }}" name="t{{ child.t }}" value="{{ child.val }}">
+            <input class="form-control" type="text" id="t{{ child.field_type }}" name="t{{ child.field_type }}" value="{{ child.val }}">
         </div>
         {% endif %}
     {% endfor %}
@@ -121,6 +144,81 @@ function copyId(i){
 
 $(document).ready(function(){
     $('#t{{ obj.t }}').focus();
+
+    // Reference field autocomplete functionality
+    $('.ref-search').on('input', function() {
+        var searchInput = $(this);
+        var searchTerm = searchInput.val();
+        var fieldType = searchInput.data('field-type');
+        var targetType = searchInput.data('target-type');
+        var selectBox = $('#t' + fieldType);
+
+        if (searchTerm.length < 1) {
+            return;
+        }
+
+        // Debounce search
+        clearTimeout(searchInput.data('timeout'));
+        var timeout = setTimeout(function() {
+            // Call AJAX endpoint
+            $.ajax({
+                url: '/{{ db_name }}/api/ref_search/' + targetType,
+                data: { q: searchTerm },
+                dataType: 'json',
+                success: function(data) {
+                    // Clear existing options except the selected one
+                    var selectedValue = selectBox.val();
+                    var selectedText = selectBox.find('option:selected').text();
+                    selectBox.empty();
+                    selectBox.append($('<option>', { value: '', text: ' ' }));
+
+                    // Re-add selected option if it exists
+                    if (selectedValue) {
+                        selectBox.append($('<option>', {
+                            value: selectedValue,
+                            text: selectedText,
+                            selected: true
+                        }));
+                    }
+
+                    // Add search results
+                    $.each(data, function(index, item) {
+                        if (item.id != selectedValue) {
+                            selectBox.append($('<option>', {
+                                value: item.id,
+                                text: item.val
+                            }));
+                        }
+                    });
+                },
+                error: function(xhr, status, error) {
+                    console.error('Error fetching reference options:', error);
+                }
+            });
+        }, 300); // 300ms debounce
+
+        searchInput.data('timeout', timeout);
+    });
+
+    // Update link when reference selection changes
+    $('.ref-select').on('change', function() {
+        var selectBox = $(this);
+        var fieldType = selectBox.data('field-type');
+        var selectedId = selectBox.val();
+        var selectedText = selectBox.find('option:selected').text();
+        var linkContainer = selectBox.closest('.comp-control').find('.mt-1');
+
+        if (selectedId && selectedText.trim() !== '') {
+            var link = '<a href="/{{ db_name }}/edit_obj/' + selectedId + '" target="_blank" class="text-sm">→ View ' + selectedText + '</a>';
+            if (linkContainer.length > 0) {
+                linkContainer.html(link);
+            } else {
+                selectBox.closest('.comp-control').append('<div class="mt-1">' + link + '</div>');
+            }
+        } else {
+            linkContainer.remove();
+        }
+    });
 });
 </script>
 </div>

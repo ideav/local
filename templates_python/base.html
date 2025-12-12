@@ -11,7 +11,7 @@
     <script src="/js/js.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.1/moment.min.js"></script>
     <script>
-        var db='{{ db_name }}', xsrf='{{ session.xsrf_token or "" }}', uid='{{ session.user_id or 0 }}', locale='[EN]';
+        var db='{{ db_name }}', xsrf='{{ session.xsrf_token or "" }}', uid='{{ session.user_id or 0 }}', locale='[{{ session.locale or "EN" }}]';
         var byId=(id)=>document.getElementById(id);
         var getCookie=(name)=>{var m=document.cookie.match('(^|;) ?'+name+'=([^;]*)(;|$)');return m?unescape(m[2]):null};
         function post(a){byId('post').action='/'+db+'/'+a;byId('post').submit();event.preventDefault?event.preventDefault():(event.returnValue=false);}
@@ -48,10 +48,11 @@
                 </svg>
             </a>
             <div class="dropdown-menu dropdown-menu-right" aria-labelledby="navbarDropdown">
-                <span class="dropdown-item">User: {{ session.user_name }}</span>
+                <span class="dropdown-item">{{ t9n('[RU]Пользователь[EN]User') }}: {{ session.user_name }}</span>
                 <div class="dropdown-divider"></div>
-                <a class="dropdown-item" href="#" onclick="$('.cp-form').css('display','table');$('.ch-toggle').show();$('.wait-toggle').hide();">Change password</a>
-                <a class="dropdown-item" href="/{{ db_name }}/logout">Exit</a>
+                <a class="dropdown-item" href="#" id="toggleLocale">EN/RU</a>
+                <a class="dropdown-item" href="#" onclick="$('.cp-form').css('display','table');$('.ch-toggle').show();$('.wait-toggle').hide();">{{ t9n('[RU]Сменить пароль[EN]Change password') }}</a>
+                <a class="dropdown-item" href="/{{ db_name }}/logout">{{ t9n('[RU]Выход[EN]Exit') }}</a>
             </div>
         </div>
     </div>
@@ -63,24 +64,24 @@
   <div class="middle" style="display: table-cell; vertical-align: middle;" onkeyup="if(event.keyCode===13)changePwd()">
     <div class="inner p-4 shadow" style="margin-left: auto; margin-right: auto; border: 1px solid gray; border-radius: 3px; background-color: #fbfbfb; max-width: 348px;" onclick="event.stopPropagation();">
         <div class="w-100 text-center mb-3">
-            <h5>Password change</h5>
+            <h5>{{ t9n('[RU]Смена пароля[EN]Password change') }}</h5>
         </div>
         <div id="pwdchangemsg" class="alert w-100" style="display: none;"></div>
-        <label for="old-pwd" class="mb-0">Current password</label>
+        <label for="old-pwd" class="mb-0">{{ t9n('[RU]Действующий пароль[EN]Current password') }}</label>
         <input type="password" id="old-pwd" class="form-control pr-1 pl-1 mb-2" style="border: 1px solid lightgray !important;">
-        <label for="new-pwd" class="mb-0">New password</label>
+        <label for="new-pwd" class="mb-0">{{ t9n('[RU]Новый пароль[EN]New password') }}</label>
         <input type="password" id="new-pwd" class="form-control pr-1 pl-1 mb-2" style="border: 1px solid lightgray !important;">
-        <label for="new-again" class="mb-0">Repeat password</label>
+        <label for="new-again" class="mb-0">{{ t9n('[RU]Повторите пароль[EN]Repeat password') }}</label>
         <input type="password" id="new-again" class="form-control pr-1 pl-1 mb-2" style="border: 1px solid lightgray !important;">
         <div class="row pt-3">
             <div class="col-12 text-center">
                 <span><img class="wait-toggle" style="display:none;" src="/i/ajax.gif"></span>
             </div>
             <div class="col-6 pr-2 ch-toggle">
-                <button class="btn btn-primary btn-block mr-3" type="button" onclick="changePwd()">Change</button>
+                <button class="btn btn-primary btn-block mr-3" type="button" onclick="changePwd()">{{ t9n('[RU]Изменить[EN]Change') }}</button>
             </div>
             <div class="col-6 pl-2 ch-toggle">
-                <button class="btn btn-outline-secondary btn-block mr-3" type="button" onclick="$('.cp-form').hide();">Cancel</button>
+                <button class="btn btn-outline-secondary btn-block mr-3" type="button" onclick="$('.cp-form').hide();">{{ t9n('[RU]Отмена[EN]Cancel') }}</button>
             </div>
         </div>
     </div>
@@ -139,6 +140,14 @@ function burgerClick(el){
     $(el).toggleClass('collapsed');
     $('#navbarSupportedContent').toggleClass('show');
 }
+
+// Language toggle function
+$('#toggleLocale').click(function(e){
+    e.preventDefault();
+    var currentLocale = locale || '[EN]';
+    var newLocale = (currentLocale === '[EN]') ? 'RU' : 'EN';
+    window.location.href = '/{{ db_name }}/set_locale/' + newLocale;
+});
 </script>
 {% block extra_js %}{% endblock %}
 </body>

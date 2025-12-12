@@ -117,10 +117,41 @@ def builtin_value(value):
     return value
 
 
-def t9n(message, locale='EN'):
-    """Simple translation function"""
+def t9n(message, locale=None):
+    """
+    Translation function for multilingual support.
+    Extracts locale-specific text from message.
+    Format: [RU]Russian text[EN]English text
+
+    Args:
+        message: String containing [LOCALE]text markers
+        locale: Optional locale override (RU or EN). If not provided, uses session/cookie locale.
+
+    Returns:
+        Translated string for the current locale
+    """
+    # Get locale from session/request if not provided
+    if locale is None:
+        try:
+            from flask import session, request
+            # Try to get locale from session (set by before_request)
+            if 'locale' in session:
+                locale = session['locale']
+            # Fallback to cookie
+            elif request:
+                db_name = getattr(request, 'db_name', 'ideav')
+                locale = request.cookies.get(f'{db_name}_locale',
+                                            request.cookies.get('my_locale', 'EN'))
+            else:
+                locale = 'EN'
+        except (ImportError, RuntimeError):
+            # Not in Flask context (e.g., during testing)
+            locale = 'EN'
+
+    # Normalize locale to uppercase
+    locale = locale.upper() if locale else 'EN'
+
     # Extract locale-specific text from message
-    # Format: [RU]Russian text[EN]English text
     locale_pattern = f'\\[{locale}\\]'
     match = re.search(f'{locale_pattern}(.*?)(?:\\[[A-Z]{{2}}\\]|$)', message, re.DOTALL)
 
@@ -200,3 +231,85 @@ def remove_directory(path):
         os.rmdir(path)
     elif os.path.exists(path):
         os.unlink(path)
+
+
+def get_reference_types(db, table_name):
+    """
+    Get mapping of field types to their reference target types.
+
+    In IdeaV, a field that references another type has a child record where:
+    - The parent (up) is the field type ID
+    - The child's type (t) points to the target type
+    - The child's value (val) is empty or specific field name
+
+    Returns:
+        dict: Mapping of {field_type_id: target_type_id}
+    """
+    # Query to find reference type mappings
+    # A reference field is one where there exists a record with up=field_id and t pointing to another type
+    # We look for metadata entries (up=0) that have children with non-zero t values
+    query = f"""
+        SELECT parent.id as field_type, child.t as target_type
+        FROM `{table_name}` parent
+        JOIN `{table_name}` child ON child.up = parent.id
+        WHERE parent.up = 0
+          AND child.t > 0
+          AND child.val = ''
+          AND child.ord = 0
+    """
+
+    results = db.execute(query)
+    ref_types = {}
+    if results:
+        for row in results:
+            ref_types[row['field_type']] = row['target_type']
+
+    return ref_types
+
+
+def get_field_base_type(db, table_name, field_type):
+    """
+    Get the base type of a field.
+
+    Args:
+        db: Database connection
+        table_name: Name of the table
+        field_type: Field type ID
+
+    Returns:
+        str: Base type name (e.g., 'SHORT', 'MEMO', 'REFERENCE', etc.)
+    """
+    # Base types are the fundamental types in the system (id = t = self-referential)
+    base_types = {
+        2: 'HTML',
+        3: 'SHORT',
+        6: 'PWD',
+        7: 'BUTTON',
+        8: 'CHARS',
+        9: 'DATE',
+        10: 'FILE',
+        11: 'BOOLEAN',
+        12: 'MEMO',
+        13: 'NUMBER',
+        14: 'SIGNED',
+        15: 'CALCULATABLE',
+        16: 'REPORT_COLUMN',
+        17: 'PATH'
+    }
+
+    # Get reference types to check if this is a reference field
+    ref_types = get_reference_types(db, table_name)
+
+    if field_type in ref_types:
+        return 'REFERENCE'
+    elif field_type in base_types:
+        return base_types[field_type]
+
+    # For custom types, find their base type by looking up the metadata
+    query = f"SELECT t FROM `{table_name}` WHERE id = %s AND up = 0"
+    result = db.execute_one(query, (field_type,))
+
+    if result and result['t'] in base_types:
+        return base_types[result['t']]
+
+    return 'SHORT'  # Default fallback

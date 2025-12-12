@@ -28,25 +28,14 @@
         <a title="Delete the selection" onclick="$('#controls').toggleClass('hidden');$('#confirm_del').toggleClass('hidden')"><img class="icon8 icon8-0" src="https://img.icons8.com/ios/30/6495ED/delete.png"/></a>
     </div>
 
-    <div class="controls-right">
-        <a onclick="$('.settings').toggleClass('hidden')" title="Control panel settings"><img class="icon8 icon8-0" src="https://img.icons8.com/ios/30/6495ED/settings.png"/></a>
-        <select id="icon8color" style="background-color:#6495ED" onchange="icon8color(this)" class="settings form-control hidden">
-            <option style="background-color:#6495ED" value="6495ED">blue</option>
-            <option style="background-color:#2E8B57" value="2E8B57">green</option>
-            <option style="background-color:#B03060" value="B03060">bordo</option>
-            <option style="background-color:#777777" value="777777">light</option>
-            <option style="background-color:#333333" value="333333">gray</option>
-            <option style="background-color:#000000" value="000000">black</option>
-        </select>
-        <select id="icon8" onchange="icon8(this.value)" class="settings form-control hidden">
-            <option value="ios">iOS</option>
-            <option value="ultraviolet">UV</option>
-            <option value="wired">cute</option>
-            <option value="windows">Win</option>
-            <option value="office">MSO</option>
-            <option value="dotty">Doty</option>
-            <option value="material-outlined">MD</option>
-        </select>
+    <div class="actions">
+        {% if can_create %}
+        <button class="btn btn-success" onclick="toggleCreateForm()">Create New</button>
+        {% endif %}
+        <a href="/{{ db_name }}/edit_obj/{{ obj.id }}" class="btn btn-primary">Edit</a>
+        <form action="/{{ db_name }}/_m_del/{{ obj.id }}" method="post" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete this object?');">
+            <button type="submit" class="btn btn-danger">Delete</button>
+        </form>
     </div>
 </div>
 
@@ -60,15 +49,59 @@
     </tr>
 </table>
 
-<div id="add" class="hidden">
-<FORM method="post" action="/{{ db_name }}/_m_new/{{ obj.id }}">
-<input type="hidden" name="_xsrf" value="{{ session.xsrf_token or '' }}">
-<input type="hidden" name="up" value="{{ obj.up }}">
-<div class="input-group controls" style="max-width:640px">
-    <input type="text" id="t{{ obj.t }}" name="t{{ obj.t }}" placeholder="{{ obj.val }}" class="form-control">
-    <div class="input-group-append">
-        <button type="submit" name="addbtn" class="btn btn-primary">Create</button>
-        <button class="btn btn-outline-secondary" onclick="$('#controls').toggleClass('hidden');$('#add').toggleClass('hidden');event.preventDefault();">Cancel</button>
+    {% if can_create %}
+    <div id="create-form" class="create-form" style="display: none;">
+        <h3>Create New Object</h3>
+        <form action="/{{ db_name }}/_m_new/{{ obj.id }}" method="post" enctype="multipart/form-data">
+            <input type="hidden" name="_xsrf" value="{{ xsrf_token }}">
+            <input type="hidden" name="up" value="{{ obj.id }}">
+
+            <div class="form-group">
+                <label for="t{{ obj.id }}">{{ obj.val }}:</label>
+                <input type="text" id="t{{ obj.id }}" name="t{{ obj.id }}" class="form-control" placeholder="Enter value">
+            </div>
+
+            {% for req in type_requirements %}
+            <div class="form-group">
+                <label for="t{{ req.id }}">{{ req.type_name or req.t }}:</label>
+                <input type="text" id="t{{ req.id }}" name="t{{ req.id }}" class="form-control" placeholder="Enter {{ req.type_name or req.t }}">
+            </div>
+            {% endfor %}
+
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Create</button>
+                <button type="button" class="btn btn-secondary" onclick="toggleCreateForm()">Cancel</button>
+            </div>
+        </form>
+    </div>
+    {% endif %}
+
+    {% if children %}
+    <div class="children">
+        <h3>Child Objects</h3>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Type</th>
+                    <th>Value</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for child in children %}
+                <tr>
+                    <td>{{ child.id }}</td>
+                    <td>{{ child.t }}</td>
+                    <td>{{ child.val }}</td>
+                    <td>
+                        <a href="/{{ db_name }}/object/{{ child.id }}">View</a> |
+                        <a href="/{{ db_name }}/edit_obj/{{ child.id }}">Edit</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 </FORM>
@@ -200,21 +233,47 @@ var compactTogglerStyle =  `
     tr {
         border: 1px solid #c8c8c8;
     }
-    thead {
-        display: block;
-        background-color: #fff;
-        position: sticky;
-        top: 0;
+    .btn-success {
+        background: #388e3c;
+        color: white;
     }
-    td div {
-        min-height: 1.6rem;
-        line-height: 1.6rem;
-        white-space: normal;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        display: -webkit-box;
-        -webkit-line-clamp: 4;
-        -webkit-box-orient: vertical;
+    .btn-secondary {
+        background: #757575;
+        color: white;
+    }
+    .btn-danger {
+        background: #d32f2f;
+        color: white;
+    }
+    .create-form {
+        margin: 20px 0;
+        padding: 20px;
+        background: #f9f9f9;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+    }
+    .form-group {
+        margin-bottom: 15px;
+    }
+    .form-group label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+    }
+    .form-control {
+        width: 100%;
+        max-width: 500px;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+    }
+    .form-actions {
+        margin-top: 20px;
+    }
+    .data-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 20px;
     }
     .clone-scroll-bar-wrap {
         pointer-events: none;
@@ -284,34 +343,16 @@ function fun2(id) {
             state = false;
         }
     }
+</style>
 
-window.addEventListener('load',function(){
-    if(getCookie('table-sm'))
-        tbCompact(true);
-    Object.defineProperty(Array.prototype, 'chunk_inefficient', {
-        value: function(chunkSize) {
-          var array = this;
-          return [].concat.apply([],
-            array.map(function(elem, i) {
-              return i % chunkSize ? [] : [array.slice(i, i + chunkSize)];
-            })
-          );
+<script>
+    function toggleCreateForm() {
+        var form = document.getElementById('create-form');
+        if (form.style.display === 'none') {
+            form.style.display = 'block';
+        } else {
+            form.style.display = 'none';
         }
-      });
-      recalculateTable();
-});
-
-$(document).ready(function(){
-    if(getCookie('icon8')){
-        byId('icon8').value=getCookie('icon8');
-        icon8(byId('icon8').value);
     }
-    if(getCookie('icon8color')){
-        byId('icon8color').value=getCookie('icon8color');
-        icon8color(byId('icon8color'));
-    } else {
-        $('#controls').toggleClass('hidden')
-    }
-});
 </script>
 {% endblock %}

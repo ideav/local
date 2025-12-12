@@ -15,12 +15,16 @@ from utils import (
     xsrf_token, t9n, builtin_value, format_date
 )
 from permissions import PermissionSystem, PermissionError, get_permission_system
+from export_import import ExportImport
 
 app = Flask(__name__, template_folder='templates_python')
 app.config.from_object(Config)
 CORS(app, origins=Config.CORS_ALLOW_ORIGIN,
      allow_headers=Config.CORS_ALLOW_HEADERS,
      methods=Config.CORS_ALLOW_METHODS)
+
+# Make t9n() available in all templates
+app.jinja_env.globals.update(t9n=t9n)
 
 
 @app.before_request
@@ -52,6 +56,17 @@ def before_request():
     if 'locale' not in session:
         session['locale'] = request.cookies.get(f'{db_name}_locale',
                                                 request.cookies.get('my_locale', 'EN'))
+
+    # Generate XSRF token for session if not exists
+    if 'xsrf_token' not in session:
+        # Use user token if authenticated, otherwise use remote address
+        token = request.cookies.get(db_name) or request.remote_addr or 'guest'
+        session['xsrf_token'] = xsrf_token(token, db_name)
+
+    # Validate XSRF token on POST requests (except auth and API endpoints)
+    if request.method == 'POST' and not is_api_request(request) and request.path != '/auth':
+        if not validate_xsrf():
+            return t9n("[RU]Неверный или устаревший токен CSRF<br/>[EN]Invalid or expired CSRF token"), 403
 
 
 @app.route('/')
@@ -98,10 +113,31 @@ def view_object(db_name, obj_id):
         # Get object children
         children = db.get_records(db_name, {'up': obj_id})
 
+        # Get type information for create form
+        # If viewing a type object (up=0), get its requirements for the create form
+        type_requirements = []
+        if obj['up'] == 0:
+            # This is a type definition, get its required fields
+            req_query = f"""
+                SELECT req.id, req.t, typ.val as type_name
+                FROM `{db_name}` req
+                LEFT JOIN `{db_name}` typ ON typ.id = req.t AND typ.up = 0
+                WHERE req.up = %s AND req.t > 0
+                ORDER BY req.ord
+            """
+            type_requirements = db.execute(req_query, (obj_id,))
+
+        # Check if user can create objects of this type
+        # For now, we'll allow creation if the object is a type (up=0)
+        can_create = obj['up'] == 0
+
         return render_template('object.html',
-                             obj=obj,
-                             children=children,
-                             db_name=db_name)
+                               obj=obj,
+                               children=children,
+                               db_name=db_name,
+                               can_create=can_create,
+                               type_requirements=type_requirements,
+                               xsrf_token=generate_token())
 
 
 @app.route('/<db_name>/edit_obj/<int:obj_id>', methods=['GET', 'POST'])
@@ -137,6 +173,42 @@ def edit_object(db_name, obj_id):
             if new_val != obj['val']:
                 db.update_val(db_name, obj_id, new_val)
 
+            # Get reference types for field processing
+            from utils import get_reference_types, get_field_base_type
+            ref_types = get_reference_types(db, db_name)
+
+            # Handle child field updates
+            children = db.get_records(db_name, {'up': obj_id})
+            for child in children:
+                field_type = child['t']
+                form_key = f't{field_type}'
+
+                if form_key in request.form:
+                    new_value = request.form.get(form_key, '')
+
+                    # Check if this is a reference field
+                    if field_type in ref_types:
+                        # For reference fields, the value is the referenced object ID
+                        # It's stored in the 't' column, not 'val'
+                        if new_value and new_value.isdigit():
+                            new_ref_id = int(new_value)
+                            if new_ref_id != child['t']:
+                                # Update the reference by changing the 't' value
+                                query = f"UPDATE `{db_name}` SET t = %s WHERE id = %s"
+                                db.execute(query, (new_ref_id, child['id']), commit=True)
+                    else:
+                        # Regular field - update the value
+                        if new_value != child['val']:
+                            db.update_val(db_name, child['id'], new_value)
+
+                # Handle boolean fields
+                if f'b{field_type}' in request.form:
+                    # Checkbox was in the form
+                    is_checked = form_key in request.form
+                    bool_val = '1' if is_checked else '0'
+                    if bool_val != child['val']:
+                        db.update_val(db_name, child['id'], bool_val)
+
             # Handle file uploads
             for key, file in request.files.items():
                 if file and file.filename:
@@ -154,10 +226,119 @@ def edit_object(db_name, obj_id):
         # Get object children for editing
         children = db.get_records(db_name, {'up': obj_id})
 
+        # Get reference type mappings
+        from utils import get_reference_types, get_field_base_type
+        ref_types = get_reference_types(db, db_name)
+
+        # Enrich children with field information
+        for child in children:
+            # For reference fields, val contains the field type ID, t contains the referenced object ID
+            # For regular fields, t contains the field type, val contains the value
+
+            # Determine if this is a metadata field definition (child of type definition)
+            parent_rec = db.get_record(db_name, child['up'])
+            is_metadata_field = parent_rec and parent_rec.get('up', 0) == 0
+
+            if is_metadata_field:
+                # This is a field definition, not an actual field value
+                field_type = int(child['val']) if child['val'].isdigit() else child['t']
+            else:
+                field_type = child['t']
+
+            child['base_type'] = get_field_base_type(db, db_name, field_type)
+            child['field_type'] = field_type
+
+            # If this is a reference field, load the reference options
+            if field_type in ref_types:
+                target_type = ref_types[field_type]
+                child['ref_target_type'] = target_type
+
+                # For reference fields, the actual reference is stored in child['t']
+                # child['val'] stores the field type ID
+                if child['t'] > 0 and child['t'] != field_type:
+                    ref_value_id = child['t']
+                    child['ref_value_id'] = ref_value_id
+
+                    # Get the referenced object's value to display
+                    ref_obj = db.get_record(db_name, ref_value_id)
+                    if ref_obj:
+                        child['ref_display_val'] = ref_obj.get('val', '')
+                else:
+                    child['ref_value_id'] = None
+                    child['ref_display_val'] = ''
+
+                # Load available reference options (limit to prevent huge lists)
+                search_param = request.args.get(f'SEARCH_{field_type}', '')
+                if search_param:
+                    # Filter by search
+                    query = f"""
+                        SELECT id, val FROM `{db_name}`
+                        WHERE t = %s AND val LIKE %s
+                        ORDER BY val
+                        LIMIT 50
+                    """
+                    ref_options = db.execute(query, (target_type, f'%{search_param}%'))
+                else:
+                    # Load first 50 options
+                    query = f"""
+                        SELECT id, val FROM `{db_name}`
+                        WHERE t = %s
+                        ORDER BY val
+                        LIMIT 50
+                    """
+                    ref_options = db.execute(query, (target_type,))
+
+                child['ref_options'] = ref_options or []
+
+        # Get field type name
+        type_obj = db.get_record(db_name, obj['t'])
+        obj['type_name'] = type_obj.get('val', 'Object') if type_obj else 'Object'
+
         return render_template('edit_obj.html',
                              obj=obj,
                              children=children,
-                             db_name=db_name)
+                             db_name=db_name,
+                             session=session)
+
+
+@app.route('/<db_name>/api/ref_search/<int:target_type>')
+def ref_search(db_name, target_type):
+    """AJAX endpoint for searching reference options"""
+    if not verify_auth(db_name):
+        return jsonify({"error": "Not authorized"}), 403
+
+    search_term = request.args.get('q', '')
+
+    with Database(db_name) as db:
+        if search_term:
+            # Search for matching objects
+            query = f"""
+                SELECT id, val FROM `{db_name}`
+                WHERE t = %s AND val LIKE %s
+                ORDER BY val
+                LIMIT 50
+            """
+            results = db.execute(query, (target_type, f'%{search_term}%'))
+        else:
+            # Return first 50 objects
+            query = f"""
+                SELECT id, val FROM `{db_name}`
+                WHERE t = %s
+                ORDER BY val
+                LIMIT 50
+            """
+            results = db.execute(query, (target_type,))
+
+        # Format results for autocomplete
+        options = []
+        if results:
+            for row in results:
+                options.append({
+                    'id': row['id'],
+                    'val': row['val']
+                })
+
+        return jsonify(options)
 
 
 @app.route('/<db_name>/report/<int:report_id>')
@@ -166,41 +347,20 @@ def view_report(db_name, report_id):
     if not verify_auth(db_name):
         return redirect(url_for('login_page', db=db_name))
 
-    try:
-        with Database(db_name) as db:
-            # Use ReportCompiler to build and execute the report
-            compiler = ReportCompiler(db, db_name)
+    with Database(db_name) as db:
+        # Get report definition
+        report = db.get_record(db_name, report_id)
+        if not report:
+            return "Report not found", 404
 
-            # Get request parameters for filtering, sorting, etc.
-            request_params = {}
-            if request.args.get('SELECT'):
-                request_params['SELECT'] = request.args.get('SELECT')
-            if request.args.get('TOTALS'):
-                request_params['TOTALS'] = request.args.get('TOTALS')
-            if request.args.get('LIMIT'):
-                request_params['LIMIT'] = request.args.get('LIMIT')
+        # Execute report query (simplified)
+        # In full implementation, this would build and execute SQL from report definition
+        results = []
 
-            # Add all FR_* and TO_* filter parameters
-            for key in request.args:
-                if key.startswith('FR_') or key.startswith('TO_'):
-                    request_params[key] = request.args.get(key)
-
-            # Compile and execute the report
-            report_data = compiler.compile_report(
-                report_id,
-                execute=True,
-                check_grant=False,
-                request_params=request_params
-            )
-
-            return render_template('report.html',
-                                 report=report_data,
-                                 results=report_data.get('results', []),
-                                 db_name=db_name)
-
-    except Exception as e:
-        write_log(f"Report error: {e}", "error", db_name)
-        return f"Error generating report: {str(e)}", 500
+        return render_template('report.html',
+                               report=report,
+                               results=results,
+                               db_name=db_name)
 
 
 @app.route('/<db_name>/upload', methods=['GET', 'POST'])
@@ -258,6 +418,122 @@ def download_file(db_name, file_id):
         physical_filename = get_filename(file_id) + '.' + ext
 
         return send_from_directory(subdir, physical_filename, as_attachment=True, download_name=filename)
+
+
+@app.route('/<db_name>/_m_new/<int:type_id>', methods=['POST'])
+def create_object(db_name, type_id):
+    """Create a new object"""
+    if not verify_auth(db_name):
+        return redirect(url_for('login_page', db=db_name))
+
+    # Get parent object ID
+    up = request.form.get('up', type='int')
+    if not up:
+        return t9n("[RU]Недопустимые данные: up не задан[EN]Data is invalid: up not provided"), 400
+
+    if up == 0:
+        return t9n("[RU]Недопустимые данные: up=0. Установите значение=1 для независимых объектов.[EN]Data is invalid: up=0. Set up=1 for independent objects."), 400
+
+    with Database(db_name) as db:
+        # Get type information
+        type_obj = db.get_record(db_name, type_id)
+        if not type_obj or type_obj['up'] != 0:
+            return t9n("[RU]Проверка типа неуспешна[EN]Type check failed"), 400
+
+        base_typ = type_obj['t']
+
+        # Get the value from the form (field name is t{type_id})
+        val = request.form.get(f't{type_id}', '').strip()
+
+        # Calculate order for the new object
+        ord_val = 1
+        if up != 1:
+            # Verify parent object exists and is not metadata
+            parent = db.get_record(db_name, up)
+            if not parent:
+                return t9n(f"[RU]Родительский объект {up} не найден.[EN]The parent object {up} not found."), 404
+            if parent['up'] == 0:
+                return t9n(f"[RU]Родительский объект {up} - метаданные.[EN]The parent object {up} is metadata."), 403
+
+            # Calculate order - get max ord + 1
+            query = f"SELECT MAX(ord) as max_ord FROM `{db_name}` WHERE up = %s AND t = %s"
+            result = db.execute_one(query, (up, type_id))
+            if result and result['max_ord'] is not None:
+                ord_val = result['max_ord'] + 1
+
+        # Generate default value if not provided
+        if not val:
+            # Check basic type from config
+            from config import Config
+            basic_type_name = Config.BASIC_TYPES.get(base_typ, 'SHORT')
+
+            if basic_type_name == 'NUMBER':
+                # Get max numeric value + 1
+                query = f"SELECT MAX(CAST(val AS UNSIGNED)) as max_val FROM `{db_name}` WHERE t = %s AND up = %s"
+                result = db.execute_one(query, (type_id, up))
+                max_val = 0
+                if result and result['max_val'] is not None:
+                    max_val = result['max_val']
+
+                # Check if there's an empty numeric object we can reuse
+                query = f"""
+                    SELECT obj.id FROM `{db_name}` obj
+                    WHERE obj.t = %s AND obj.val = %s AND obj.up = %s
+                    AND NOT EXISTS(SELECT * FROM `{db_name}` reqs WHERE reqs.up = obj.id)
+                    LIMIT 1
+                """
+                result = db.execute_one(query, (type_id, str(max_val), up))
+                if result:
+                    # Redirect to edit this existing empty object
+                    return redirect(url_for('edit_object', db_name=db_name, obj_id=result['id']))
+
+                val = str(max_val + 1)
+            elif basic_type_name == 'DATE':
+                import time
+                val = time.strftime('%d', time.localtime())
+            elif basic_type_name == 'DATETIME':
+                import time
+                val = str(int(time.time()))
+            elif basic_type_name == 'SIGNED':
+                val = '1'
+            else:
+                val = str(ord_val)
+
+        # Check uniqueness if required (ord field in type object indicates uniqueness)
+        if type_obj.get('ord', 0) == 1:
+            query = f"SELECT id FROM `{db_name}` WHERE t = %s AND val = %s AND up = %s LIMIT 1"
+            existing = db.execute_one(query, (type_id, val, up))
+            if existing:
+                return t9n(f"[RU]<b>{val}</b> уже существует! Перейти к <a href='/{db_name}/edit_obj/{existing['id']}'>{val}</a>[EN]<b>{val}</b> already exists. Go to <a href='/{db_name}/edit_obj/{existing['id']}'>{val}</a>"), 409
+
+        # Insert the new object
+        new_obj_id = db.insert(db_name, up, ord_val, type_id, val, "Add Object")
+
+        # Handle additional fields (requirements/attributes)
+        for key, value in request.form.items():
+            if key.startswith('t') and key != f't{type_id}':
+                # Extract type ID from field name
+                try:
+                    t = int(key[1:])
+                except ValueError:
+                    continue
+
+                if t > 0 and value:
+                    # Insert the attribute
+                    db.insert(db_name, new_obj_id, 1, t, value, "Insert new req")
+
+        # Handle file uploads
+        for key, file in request.files.items():
+            if file and file.filename and key.startswith('t'):
+                try:
+                    t = int(key[1:])
+                    if t > 0:
+                        handle_file_upload(db, db_name, new_obj_id, t, file)
+                except (ValueError, Exception) as e:
+                    write_log(f"File upload error: {e}", "error", db_name)
+
+        # Redirect to edit the newly created object
+        return redirect(url_for('edit_object', db_name=db_name, obj_id=new_obj_id))
 
 
 @app.route('/<db_name>/_m_del/<int:obj_id>', methods=['POST'])
@@ -723,7 +999,7 @@ def auth():
     password = request.form.get('password', '')
     
     if not email or not password:
-        return render_template('login.html', db_name=db_name, error='Введите email и пароль')
+        return render_template('login.html', db_name=db_name, error=t9n('[RU]Введите email и пароль[EN]Enter email and password'))
     
     try:
         with Database(db_name) as db:
@@ -753,16 +1029,20 @@ def auth():
                             f'INSERT INTO {db_name} (t, up, ord, val) VALUES ({Config.TOKEN}, %s, 1, %s)',
                             (result['user_id'], token), commit=True
                         )
-                    
+
+                    # Generate XSRF token for this session
+                    session['xsrf_token'] = xsrf_token(token, db_name)
+                    session['user_id'] = result['user_id']
+
                     response = redirect(f'/{db_name}')
                     response.set_cookie(db_name, token, max_age=31536000, path='/')
                     return response
             
-            return render_template('login.html', db_name=db_name, error='Неверный email или пароль')
+            return render_template('login.html', db_name=db_name, error=t9n('[RU]Неверный email или пароль[EN]Invalid email or password'))
             
     except Exception as e:
         write_log(f'Auth error: {e}', 'error', db_name)
-        return render_template('login.html', db_name=db_name, error='Ошибка авторизации')
+        return render_template('login.html', db_name=db_name, error=t9n('[RU]Ошибка авторизации[EN]Authentication error'))
 
 
 @app.route('/login')
@@ -779,4 +1059,28 @@ def logout(db_name):
     session.clear()
     response = redirect(url_for('login_page', db=db_name))
     response.delete_cookie(db_name)
+    return response
+
+
+@app.route('/<db_name>/set_locale/<locale>')
+def set_locale(db_name, locale):
+    """Set language preference"""
+    # Validate locale
+    if locale not in ['RU', 'EN']:
+        locale = 'EN'
+
+    # Store in session
+    session['locale'] = locale
+
+    # Redirect back to referrer or home
+    referrer = request.referrer
+    if referrer and db_name in referrer:
+        response = redirect(referrer)
+    else:
+        response = redirect(url_for('index', db_name=db_name))
+
+    # Set cookie for persistence
+    response.set_cookie(f'{db_name}_locale', locale, max_age=31536000, path='/')
+    response.set_cookie('my_locale', locale, max_age=31536000, path='/')
+
     return response
