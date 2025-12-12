@@ -1,60 +1,151 @@
 {% extends "base.html" %}
 
-{% block title %}Report {{ report.id }} - IdeaV{% endblock %}
+{% block title %}Report {{ report.id if report else 'View' }} - IdeaV{% endblock %}
 
 {% block content %}
-<div class="report-view">
-    <h2>Report: {{ report.val }}</h2>
-
-    {% if results %}
-    <table class="data-table">
-        <thead>
-            <tr>
+<FORM method="post" id="report" action="/{{ db_name }}/report/{{ report.id if report else '' }}">
+<input type="hidden" name="_xsrf" value="{{ session.xsrf_token or '' }}">
+    <TABLE>
+    <TR>
+        <TD>&nbsp;<a href="/{{ db_name }}"><span class="glyphicon glyphicon-home">&#x1F3E0;</span></a>&nbsp;
+        <script type="text/javascript">
+        var tableToExcel = (function() {
+          var uri = 'data:application/vnd.ms-excel;base64,'
+            , template = ('<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>{worksheet}</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--><meta http-equiv="content-type" content="text/plain; charset=UTF-8"/></head><body><table>{table}</table></body></html>')
+            , base64 = function(s) { return window.btoa(unescape(encodeURIComponent(s))); }
+            , format = function(s, c) { return s.replace(/{(\w+)}/g, function(m, p) { return c[p]; }) }
+          return function(table, name) {
+            if (!table.nodeType) table = byId(table)
+            var ctx = {worksheet: name || 'Worksheet', table: table.innerHTML}
+            window.location.href = uri + base64(format(template, ctx))
+          }
+        })()
+        </script>
+        <a href="#" onclick="byId('refresh').style.display='none'; if(byId('filter_row')) byId('report_table').deleteRow(1); tableToExcel('report_table', '{{ report.val if report else "Report" }}');" style="border: 1px solid; border-radius: 5px; padding:3px; ">.XLS</a>
+        </td>
+        <TD ALIGN="center"><H4>{{ report.val if report else 'Report View' }}</H4></TD>
+        <TD align="right">
+            <a href="#" title="Switch between compact and loose view" onclick="toggle_compact(); return false;"><span style="font-size:20px;">&#x2194;</span></a>&nbsp;
+            &nbsp;<a href="#" title="To display the filter, click here or on the heading of the table" onclick="toggle_filter(); return false;"><span style="font-size:20px;">&#x1F50D;</span></a>
+            &nbsp;<button id="refresh" type="submit" class="btn btn-default btn-xs" title="Apply filter" style="border:none;"><a href="#"><span style="font-size:20px;">&#x21BB;</span></a></button>
+            &nbsp;<a href="/{{ db_name }}/report/{{ report.id if report else '' }}" title="Reset the filter and run the report"><span style="font-size:20px;">&#x2716;</span></a>&nbsp;
+        </TD>
+    </TR>
+    <TR>
+    <TD colspan="3">
+        {% if results %}
+        <TABLE id="report_table" class="table table-bordered">
+            <TR style="background-color:#f9f9f9;" onclick="toggle_filter();">
                 {% for col in results[0].keys() %}
-                <th>{{ col }}</th>
+                <TD ALIGN="CENTER"><B>{{ col }}</B></TD>
                 {% endfor %}
-            </tr>
-        </thead>
-        <tbody>
+            </TR>
+            <TR id="filter_row" style="display:none;">
+                {% for col in results[0].keys() %}
+                <TD style="padding:0px;" align="center">
+                <input type="text" name="FR_{{ col }}" value="" size="2" id="FR_{{ col }}" oninput="adjust('FR_{{ col }}')">-<input type="text" name="TO_{{ col }}" value="" size="2" id="TO_{{ col }}" oninput="adjust('TO_{{ col }}')">
+                </TD>
+                {% endfor %}
+            </TR>
             {% for row in results %}
-            <tr>
+            <TR>
                 {% for value in row.values() %}
-                <td>{{ value }}</td>
+                <TD ALIGN="left">{{ value }}</TD>
                 {% endfor %}
-            </tr>
+            </TR>
             {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p>No results found.</p>
-    {% endif %}
+        </TABLE>
+        {% else %}
+        <p>No results found.</p>
+        {% endif %}
+    </TD>
+    </TR>
+    </TABLE>
+</FORM>
 
-    <div class="actions">
-        <a href="/{{ db_name }}" class="btn btn-secondary">Back</a>
-    </div>
-</div>
+<script>
+function toggle_filter() {
+    if(!byId('filter_row'))
+        location.reload();
+    else
+    if(byId('filter_row').style.display=='table-row')
+        byId('filter_row').style.display='none';
+    else
+        byId('filter_row').style.display='table-row';
+}
+
+function set_cookie(name, value)
+{
+    var date = new Date();
+    date.setTime(date.getTime()+31536000000); // 1 year
+    document.cookie = name+"="+escape(value)+"; expires="+date.toGMTString();
+}
+
+function get_cookie(name)
+{
+  var results = document.cookie.match ( '(^|;) ?' + name + '=([^;]*)(;|$)' );
+  if(results)
+    return (unescape(results[2]));
+  else
+    return null;
+}
+
+function delete_cookie(name)
+{
+  var cookie_date=new Date();
+  cookie_date.setTime(cookie_date.getTime()-1);
+  document.cookie=name+"=; expires="+cookie_date.toGMTString();
+}
+
+function toggle_compact() {
+    if(get_cookie("compact") == "compact") {
+        byId('report_table').classList.remove('table-condensed');
+        delete_cookie("compact");
+    }
+    else {
+        byId('report_table').classList.add('table-condensed');
+        set_cookie("compact", "compact" );
+    }
+}
+
+function adjust(id) {
+    byId(id).size=byId(id).value.length + 1;
+}
+
+if(get_cookie("compact") == "compact")
+    byId('report_table').classList.add('table-condensed');
+</script>
 
 <style>
     .report-view {
         padding: 20px;
     }
-    .data-table {
+    .data-table, .table {
         width: 100%;
         border-collapse: collapse;
         margin: 20px 0;
     }
     .data-table th,
-    .data-table td {
+    .data-table td,
+    .table th,
+    .table td {
         border: 1px solid #ddd;
         padding: 8px;
         text-align: left;
     }
-    .data-table th {
-        background: #f5f5f5;
+    .data-table th,
+    .table th {
+        background: #f9f9f9;
         font-weight: bold;
     }
-    .data-table tr:hover {
+    .data-table tr:hover,
+    .table tr:hover {
         background: #f9f9f9;
+    }
+    .table-condensed td,
+    .table-condensed th {
+        padding: 4px;
+        font-size: 12px;
     }
     .btn {
         display: inline-block;
