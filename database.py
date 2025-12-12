@@ -73,6 +73,77 @@ class Database:
         query = f"DELETE FROM `{table}` WHERE id = %s OR up = %s"
         self.execute(query, (record_id, record_id), commit=True)
 
+    def batch_delete(self, table, record_ids):
+        """
+        Delete multiple records and their children recursively.
+        This implements the BatchDelete functionality from PHP.
+
+        Args:
+            table: Table name
+            record_ids: List of record IDs to delete
+        """
+        if not record_ids:
+            return
+
+        batch_ups = []
+        batch_ids = []
+
+        def collect_children(record_id, is_root=True):
+            """Recursively collect IDs to delete"""
+            # Get children for this record
+            query = f"""
+                SELECT del.id, MIN(child.up) as has_child
+                FROM `{table}` del
+                LEFT JOIN `{table}` child ON child.up = del.id
+                WHERE del.up = %s
+                GROUP BY del.id
+            """
+            children = self.execute(query, (record_id,))
+
+            if children:
+                for child in children:
+                    child_id = child['id']
+                    if child.get('has_child'):
+                        # Child has its own children, recurse
+                        collect_children(child_id, False)
+                    batch_ups.append(child_id)
+
+                    # Flush if batch gets too large (10000 IDs ~ 50KB)
+                    if len(batch_ups) > 10000:
+                        flush_batch()
+
+                batch_ups.append(record_id)
+                if len(batch_ups) > 10000:
+                    flush_batch()
+
+            if is_root:
+                batch_ids.append(record_id)
+                if len(batch_ids) > 10000:
+                    flush_batch()
+
+        def flush_batch():
+            """Execute delete queries for accumulated IDs"""
+            nonlocal batch_ups, batch_ids
+
+            if batch_ups:
+                ids_str = ','.join(map(str, batch_ups))
+                query = f"DELETE FROM `{table}` WHERE up IN ({ids_str})"
+                self.execute(query, commit=True)
+                batch_ups = []
+
+            if batch_ids:
+                ids_str = ','.join(map(str, batch_ids))
+                query = f"DELETE FROM `{table}` WHERE id IN ({ids_str})"
+                self.execute(query, commit=True)
+                batch_ids = []
+
+        # Process each record
+        for record_id in record_ids:
+            collect_children(record_id)
+
+        # Final flush
+        flush_batch()
+
     def get_record(self, table, record_id):
         """Get a single record by ID"""
         query = f"SELECT * FROM `{table}` WHERE id = %s"
