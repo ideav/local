@@ -2,6 +2,7 @@
 Database connection and operations
 """
 import pymysql
+from typing import Dict, Any, Optional, List
 from config import Config
 
 
@@ -90,6 +91,72 @@ class Database:
             query += " WHERE " + " AND ".join(where_clauses)
         else:
             params = []
+
+        if limit:
+            query += f" LIMIT {int(limit)}"
+            if offset:
+                query += f" OFFSET {int(offset)}"
+
+        return self.execute(query, tuple(params))
+
+    def get_records_filtered(
+        self,
+        table: str,
+        filters: Optional[Dict[int, Dict[str, Any]]] = None,
+        cur_typ: int = 1,
+        field_types: Optional[Dict[int, str]] = None,
+        ref_types: Optional[Dict[int, int]] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        order_by: Optional[str] = None
+    ) -> List[Dict]:
+        """
+        Get multiple records with advanced filtering support.
+
+        This method implements the filtering system from the PHP version,
+        supporting complex WHERE clauses, range filters, text search, etc.
+
+        Args:
+            table: Table name
+            filters: Dictionary mapping field IDs to their filter conditions
+                    Example: {3: {"F": "test"}, 13: {"FR": "0", "TO": "100"}}
+            cur_typ: Current object type ID
+            field_types: Dictionary mapping type IDs to field type names
+            ref_types: Dictionary mapping reference type IDs to their target types
+            limit: Maximum number of records to return
+            offset: Number of records to skip
+            order_by: ORDER BY clause (e.g., "vals.val ASC")
+
+        Returns:
+            List of record dictionaries
+        """
+        from filters import apply_filters
+
+        # Build base query
+        distinct = ""
+        join_clause = ""
+        where_clause = ""
+        params = []
+
+        # Apply filters if provided
+        if filters:
+            where_clause, join_clause, params, is_distinct = apply_filters(
+                table, filters, cur_typ, field_types, ref_types
+            )
+            if is_distinct:
+                distinct = "DISTINCT"
+
+        # Construct query
+        query = f"SELECT {distinct} vals.* FROM `{table}` vals"
+
+        if join_clause:
+            query += f" {join_clause}"
+
+        if where_clause:
+            query += f" WHERE {where_clause}"
+
+        if order_by:
+            query += f" ORDER BY {order_by}"
 
         if limit:
             query += f" LIMIT {int(limit)}"

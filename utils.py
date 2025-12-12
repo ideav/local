@@ -80,26 +80,39 @@ def format_date(date_val):
 
 def builtin_value(value):
     """Replace built-in placeholders with actual values"""
-    from flask import request, session
-
     if isinstance(value, str):
+        # Basic replacements that don't need request context
         replacements = {
             '[TODAY]': datetime.now().strftime('%Y%m%d'),
             '[NOW]': datetime.now().strftime('%Y%m%d%H%M%S'),
             '[YESTERDAY]': (datetime.now() - timedelta(days=1)).strftime('%Y%m%d'),
             '[TOMORROW]': (datetime.now() + timedelta(days=1)).strftime('%Y%m%d'),
             '[MONTH_AGO]': (datetime.now() - timedelta(days=30)).strftime('%Y%m%d'),
-            '[USER]': session.get('user_name', ''),
-            '[USER_ID]': str(session.get('user_id', '')),
-            '[REMOTE_ADDR]': request.remote_addr or '',
-            '[HTTP_USER_AGENT]': request.headers.get('User-Agent', ''),
-            '[HTTP_REFERER]': request.headers.get('Referer', ''),
-            '[HTTP_HOST]': request.host or ''
         }
 
         for placeholder, replacement in replacements.items():
             if value == placeholder:
                 return replacement
+
+        # Request-context dependent replacements
+        try:
+            from flask import request, session
+
+            request_replacements = {
+                '[USER]': session.get('user_name', ''),
+                '[USER_ID]': str(session.get('user_id', '')),
+                '[REMOTE_ADDR]': request.remote_addr or '',
+                '[HTTP_USER_AGENT]': request.headers.get('User-Agent', ''),
+                '[HTTP_REFERER]': request.headers.get('Referer', ''),
+                '[HTTP_HOST]': request.host or ''
+            }
+
+            for placeholder, replacement in request_replacements.items():
+                if value == placeholder:
+                    return replacement
+        except RuntimeError:
+            # Not in request context (e.g., during testing)
+            pass
 
     return value
 
