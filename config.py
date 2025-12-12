@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 """
 Configuration file for the application
 """
@@ -24,7 +27,7 @@ class Config:
 
     # Session configuration
     PERMANENT_SESSION_LIFETIME = timedelta(days=360)
-    SESSION_COOKIE_NAME = 'ideav'
+    SESSION_COOKIE_NAME = 'ideav_session'
     SESSION_COOKIE_PATH = '/'
 
     # Upload configuration

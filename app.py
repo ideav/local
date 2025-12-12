@@ -67,14 +67,6 @@ def index(db_name='ideav'):
     return render_template('main.html', db_name=db_name)
 
 
-@app.route('/login')
-def login_page():
-    """Login page"""
-    error = request.args.get('error', '')
-    db_name = request.args.get('db', 'ideav')
-    return render_template('info.html', error=error, db_name=db_name)
-
-
 @app.route('/<db_name>/object/<int:obj_id>')
 def view_object(db_name, obj_id):
     """View an object"""
@@ -371,3 +363,72 @@ if __name__ == '__main__':
 
     # Run application
     app.run(host='0.0.0.0', port=5000, debug=True)
+
+
+@app.route('/auth', methods=['POST'])
+def auth():
+    """Handle login form"""
+    import hashlib
+    
+    db_name = request.form.get('db', 'ideav')
+    email = request.form.get('email', '').strip().lower()
+    password = request.form.get('password', '')
+    
+    if not email or not password:
+        return render_template('login.html', db_name=db_name, error='Введите email и пароль')
+    
+    try:
+        with Database(db_name) as db:
+            # Find user by email (t=31 is Email type, up points to user)
+            query = f'''
+                SELECT u.id as user_id, p.val as pwd_hash, t.val as token
+                FROM {db_name} e
+                JOIN {db_name} u ON e.up = u.id AND u.t = {Config.USER}
+                LEFT JOIN {db_name} p ON p.up = u.id AND p.t = 20
+                LEFT JOIN {db_name} t ON t.up = u.id AND t.t = {Config.TOKEN}
+                WHERE e.t = 31 AND LOWER(e.val) = %s
+            '''
+            result = db.execute_one(query, (email,))
+            
+            if result:
+                # Hash the password with salt
+                salt = Config.SALT
+                pwd_hash = hashlib.sha1((salt + password).encode()).hexdigest()
+                
+                if result['pwd_hash'] == pwd_hash:
+                    # Login successful
+                    token = result['token']
+                    if not token:
+                        token = generate_token()
+                        # Save new token
+                        db.execute(
+                            f'INSERT INTO {db_name} (t, up, ord, val) VALUES ({Config.TOKEN}, %s, 1, %s)',
+                            (result['user_id'], token), commit=True
+                        )
+                    
+                    response = redirect(f'/{db_name}')
+                    response.set_cookie(db_name, token, max_age=31536000, path='/')
+                    return response
+            
+            return render_template('login.html', db_name=db_name, error='Неверный email или пароль')
+            
+    except Exception as e:
+        write_log(f'Auth error: {e}', 'error', db_name)
+        return render_template('login.html', db_name=db_name, error='Ошибка авторизации')
+
+
+@app.route('/login')
+def login_page():
+    """Login page with form"""
+    error = request.args.get('error', '')
+    db_name = request.args.get('db', 'ideav')
+    return render_template('login.html', error=error, db_name=db_name)
+
+
+@app.route('/<db_name>/logout')
+def logout(db_name):
+    """Logout user"""
+    session.clear()
+    response = redirect(url_for('login_page', db=db_name))
+    response.delete_cookie(db_name)
+    return response
