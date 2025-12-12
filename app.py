@@ -8,6 +8,7 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from config import Config
 from database import Database
+from report_compiler import ReportCompiler
 from utils import (
     check_db_name, is_api_request, blacklist_extension,
     get_subdir, get_filename, write_log, generate_token,
@@ -66,14 +67,6 @@ def index(db_name='ideav'):
         return redirect(url_for('login_page', db=db_name))
 
     return render_template('main.html', db_name=db_name)
-
-
-@app.route('/login')
-def login_page():
-    """Login page"""
-    error = request.args.get('error', '')
-    db_name = request.args.get('db', 'ideav')
-    return render_template('info.html', error=error, db_name=db_name)
 
 
 @app.route('/<db_name>/object/<int:obj_id>')
@@ -169,20 +162,41 @@ def view_report(db_name, report_id):
     if not verify_auth(db_name):
         return redirect(url_for('login_page', db=db_name))
 
-    with Database(db_name) as db:
-        # Get report definition
-        report = db.get_record(db_name, report_id)
-        if not report:
-            return "Report not found", 404
+    try:
+        with Database(db_name) as db:
+            # Use ReportCompiler to build and execute the report
+            compiler = ReportCompiler(db, db_name)
 
-        # Execute report query (simplified)
-        # In full implementation, this would build and execute SQL from report definition
-        results = []
+            # Get request parameters for filtering, sorting, etc.
+            request_params = {}
+            if request.args.get('SELECT'):
+                request_params['SELECT'] = request.args.get('SELECT')
+            if request.args.get('TOTALS'):
+                request_params['TOTALS'] = request.args.get('TOTALS')
+            if request.args.get('LIMIT'):
+                request_params['LIMIT'] = request.args.get('LIMIT')
 
-        return render_template('report.html',
-                             report=report,
-                             results=results,
-                             db_name=db_name)
+            # Add all FR_* and TO_* filter parameters
+            for key in request.args:
+                if key.startswith('FR_') or key.startswith('TO_'):
+                    request_params[key] = request.args.get(key)
+
+            # Compile and execute the report
+            report_data = compiler.compile_report(
+                report_id,
+                execute=True,
+                check_grant=False,
+                request_params=request_params
+            )
+
+            return render_template('report.html',
+                                 report=report_data,
+                                 results=report_data.get('results', []),
+                                 db_name=db_name)
+
+    except Exception as e:
+        write_log(f"Report error: {e}", "error", db_name)
+        return f"Error generating report: {str(e)}", 500
 
 
 @app.route('/<db_name>/upload', methods=['GET', 'POST'])
@@ -294,8 +308,59 @@ def api_objects(db_name):
         with Database(db_name) as db:
             limit = request.args.get('limit', Config.DEFAULT_LIMIT, type=int)
             offset = request.args.get('offset', 0, type=int)
-            objects = db.get_records(db_name, limit=limit, offset=offset)
-            return jsonify(objects)
+
+            # Check for filters in request or session
+            filters = None
+            save_filters = request.args.get('save_filters', 'true').lower() == 'true'
+
+            # Parse filters from query parameters
+            # Format: filter[field_id][filter_type]=value
+            # Example: filter[3][F]=test&filter[13][FR]=0&filter[13][TO]=100
+            parsed_filters = {}
+            for key, value in request.args.items():
+                if key.startswith('filter['):
+                    # Extract field_id and filter_type from filter[field_id][filter_type]
+                    import re
+                    match = re.match(r'filter\[(\d+)\]\[(\w+)\]', key)
+                    if match:
+                        field_id = int(match.group(1))
+                        filter_type = match.group(2)
+
+                        if field_id not in parsed_filters:
+                            parsed_filters[field_id] = {}
+                        parsed_filters[field_id][filter_type] = value
+
+            # Use parsed filters if provided, otherwise check session
+            if parsed_filters:
+                filters = parsed_filters
+                if save_filters:
+                    # Save filters to session
+                    session[f'{db_name}_filters'] = filters
+            elif f'{db_name}_filters' in session:
+                filters = session[f'{db_name}_filters']
+
+            # Clear filters if requested
+            if request.args.get('clear_filters') == 'true':
+                if f'{db_name}_filters' in session:
+                    del session[f'{db_name}_filters']
+                filters = None
+
+            # Get objects with optional filtering
+            if filters:
+                objects = db.get_records_filtered(
+                    db_name,
+                    filters=filters,
+                    limit=limit,
+                    offset=offset
+                )
+            else:
+                objects = db.get_records(db_name, limit=limit, offset=offset)
+
+            return jsonify({
+                'objects': objects,
+                'filters': filters,
+                'count': len(objects)
+            })
 
     elif request.method == 'POST':
         data = request.get_json()
@@ -453,3 +518,72 @@ if __name__ == '__main__':
 
     # Run application
     app.run(host='0.0.0.0', port=5000, debug=True)
+
+
+@app.route('/auth', methods=['POST'])
+def auth():
+    """Handle login form"""
+    import hashlib
+    
+    db_name = request.form.get('db', 'ideav')
+    email = request.form.get('email', '').strip().lower()
+    password = request.form.get('password', '')
+    
+    if not email or not password:
+        return render_template('login.html', db_name=db_name, error='Введите email и пароль')
+    
+    try:
+        with Database(db_name) as db:
+            # Find user by email (t=31 is Email type, up points to user)
+            query = f'''
+                SELECT u.id as user_id, p.val as pwd_hash, t.val as token
+                FROM {db_name} e
+                JOIN {db_name} u ON e.up = u.id AND u.t = {Config.USER}
+                LEFT JOIN {db_name} p ON p.up = u.id AND p.t = 20
+                LEFT JOIN {db_name} t ON t.up = u.id AND t.t = {Config.TOKEN}
+                WHERE e.t = 31 AND LOWER(e.val) = %s
+            '''
+            result = db.execute_one(query, (email,))
+            
+            if result:
+                # Hash the password with salt
+                salt = Config.SALT
+                pwd_hash = hashlib.sha1((salt + password).encode()).hexdigest()
+                
+                if result['pwd_hash'] == pwd_hash:
+                    # Login successful
+                    token = result['token']
+                    if not token:
+                        token = generate_token()
+                        # Save new token
+                        db.execute(
+                            f'INSERT INTO {db_name} (t, up, ord, val) VALUES ({Config.TOKEN}, %s, 1, %s)',
+                            (result['user_id'], token), commit=True
+                        )
+                    
+                    response = redirect(f'/{db_name}')
+                    response.set_cookie(db_name, token, max_age=31536000, path='/')
+                    return response
+            
+            return render_template('login.html', db_name=db_name, error='Неверный email или пароль')
+            
+    except Exception as e:
+        write_log(f'Auth error: {e}', 'error', db_name)
+        return render_template('login.html', db_name=db_name, error='Ошибка авторизации')
+
+
+@app.route('/login')
+def login_page():
+    """Login page with form"""
+    error = request.args.get('error', '')
+    db_name = request.args.get('db', 'ideav')
+    return render_template('login.html', error=error, db_name=db_name)
+
+
+@app.route('/<db_name>/logout')
+def logout(db_name):
+    """Logout user"""
+    session.clear()
+    response = redirect(url_for('login_page', db=db_name))
+    response.delete_cookie(db_name)
+    return response
