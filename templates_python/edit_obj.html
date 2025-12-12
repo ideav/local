@@ -2,91 +2,126 @@
 
 {% block title %}Edit Object {{ obj.id }} - IdeaV{% endblock %}
 
+{% block extra_css %}
+<style>
+label {
+    font-size: 90%;
+    color: gray;
+    display: inline;
+    margin-top: .5rem;
+    margin-bottom: 0;
+}
+.dict-title{
+    padding: 20px 0 10px 0;
+    font-size: 24px;
+    line-height: 24px;
+    color: #172D4E;
+    display: block;
+}
+.comp-control {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+}
+.hidden { display:none; }
+.btn-xs {
+    padding: 1px 5px;
+    line-height: 1.5;
+    border-radius: 3px;
+}
+input[type=checkbox] {
+    width: 38px;
+}
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="edit-object">
-    <h2>Edit Object: {{ obj.val }}</h2>
+<div class="container">
+<div id="messages" class="msgs" onclick="this.innerHTML=''"></div>
+<div class="row p-1">
+<div class="col-12 col-lg-10 col-xl-8" style="min-width: 348px;">
+<FORM id="form" method="post" action="/{{ db_name }}/edit_obj/{{ obj.id }}" ENCTYPE="multipart/form-data">
+<input type="hidden" name="_xsrf" value="{{ session.xsrf_token or '' }}">
+    <div class="dict-title">
+        {{ obj.val }} <font color="lightgray" onclick="copyId({{ obj.id }})">#{{ obj.id }} <span id="copied" style="display:none;" class="text-nowrap">(copied)</span></font>
+    </div>
 
-    <form method="post" enctype="multipart/form-data">
-        <div class="form-group">
-            <label for="t{{ obj.t }}">Value:</label>
-            <input type="text" id="t{{ obj.t }}" name="t{{ obj.t }}" value="{{ obj.val }}" class="form-control">
-        </div>
+    <div class="form-row no-gutters">
+    {% for child in children %}
+        <label for="t{{ child.t }}">Field {{ child.t }}</label>
 
-        {% if children %}
-        <h3>Attributes</h3>
-        {% for child in children %}
-        <div class="form-group">
-            <label for="t{{ child.t }}">{{ child.t }}:</label>
-            {% if child.t == 10 %}
-            <input type="file" id="t{{ child.t }}" name="t{{ child.t }}" class="form-control">
-            <p class="help-text">Current: {{ child.val }}</p>
-            {% elif child.t == 11 %}
-            <input type="checkbox" id="t{{ child.t }}" name="t{{ child.t }}" value="1" {% if child.val %}checked{% endif %}>
-            {% elif child.t == 12 %}
-            <textarea id="t{{ child.t }}" name="t{{ child.t }}" class="form-control" rows="5">{{ child.val }}</textarea>
-            {% else %}
-            <input type="text" id="t{{ child.t }}" name="t{{ child.t }}" value="{{ child.val }}" class="form-control">
+        {% if child.t == 10 %}
+        <!-- File field -->
+        <div class="pb-3 col-12 col-sm-9 col-md-6 pt-1">
+            {% if child.val %}
+            <span class="file-{{ child.t }}">Current: {{ child.val }}</span>
             {% endif %}
+            <input class="form-control-file mt-2" type="file" id="t{{ child.t }}" name="t{{ child.t }}">
         </div>
-        {% endfor %}
+        {% elif child.t == 11 %}
+        <!-- Checkbox field -->
+        <div class="comp-control pb-3 col-6 col-sm-4 col-md-3">
+            <input class="form-control" type="checkbox" id="t{{ child.t }}" name="t{{ child.t }}" value="1" {% if child.val %}checked{% endif %}/>
+            <input type="hidden" name="b{{ child.t }}" value="1">
+        </div>
+        {% elif child.t == 12 %}
+        <!-- Textarea field -->
+        <div class="comp-control pb-3 col-12">
+            <TEXTAREA class="form-control" id="t{{ child.t }}" name="t{{ child.t }}" rows="5">{{ child.val }}</TEXTAREA>
+        </div>
+        {% else %}
+        <!-- Default text field -->
+        <div class="comp-control pb-3 col-12 col-sm-4 col-md-3">
+            <input class="form-control" type="text" id="t{{ child.t }}" name="t{{ child.t }}" value="{{ child.val }}">
+        </div>
         {% endif %}
+    {% endfor %}
+    </div>
 
-        <div class="form-actions">
-            <button type="submit" class="btn btn-primary">Save</button>
-            <a href="/{{ db_name }}/object/{{ obj.id }}" class="btn btn-secondary">Cancel</a>
+    <div id="buttons" class="pt-3 pb-2">
+        <A HREF="/{{ db_name }}/object/{{ obj.up }}"><button type="button" class="btn btn-secondary btn-sm mb-1 mr-1">Back</button></A>
+    </div>
+
+    <div class="row" style="padding: 0 5px 5px 15px;">
+        <div class="col-6 col-sm-4 col-md-3 col-xl-3 p-0 pr-2 copy-dub">
+            <input id="savebtn" type="submit" name="savebtn" class="btn btn-primary btn-block mb-2" value="Save">
         </div>
-    </form>
+        <div class="col-6 col-sm-4 col-md-3 col-xl-3 p-0 pr-2 undo-btn">
+            <A HREF="/{{ db_name }}/object/{{ obj.up }}"><button type="button" class="btn btn-outline-secondary btn-block mb-2">Cancel</button></A>
+        </div>
+        <div class="col-6 col-sm-4 col-md-3 col-xl-3 p-0 pr-2 del-btn">
+            <button type="button" class="btn btn-warning btn-block mb-2" onclick="$('.copy-dub').hide(); $('.undo-btn, .del-btn').hide(); $('.confirm-del').show();">Delete</button>
+        </div>
+    </div>
+
+    <div class="confirm-del" style="display:none; border:2px #f0ad4e solid; border-radius:10px; padding:6px;">
+        <p><b>Confirm to delete {{ obj.val }}</b></p>
+        <div class="row" style="padding: 0 5px 5px 15px;">
+            <div class="col-6 col-sm-4 col-md-3 col-xl-3 p-0 pr-2">
+                <button type="button" class="btn btn-warning btn-block mb-2" onclick="post('_m_del/{{ obj.id }}')">Yes, delete</button>
+            </div>
+            <div class="col-6 col-sm-4 col-md-3 col-xl-3 p-0 pr-2">
+                <button type="button" class="btn btn-outline-secondary btn-block mb-2" onclick="$('.copy-dub').show(); $('.undo-btn, .del-btn').show(); $('.confirm-del').hide();">Cancel</button>
+            </div>
+        </div>
+    </div>
+</FORM>
+</div>
 </div>
 
-<style>
-    .edit-object {
-        padding: 20px;
-        max-width: 800px;
-        margin: 0 auto;
-    }
-    .form-group {
-        margin-bottom: 20px;
-    }
-    .form-group label {
-        display: block;
-        margin-bottom: 5px;
-        font-weight: bold;
-    }
-    .form-control {
-        width: 100%;
-        padding: 8px;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        font-size: 14px;
-    }
-    .form-control:focus {
-        outline: none;
-        border-color: #1976d2;
-    }
-    .help-text {
-        font-size: 12px;
-        color: #666;
-        margin-top: 5px;
-    }
-    .form-actions {
-        margin-top: 30px;
-    }
-    .btn {
-        display: inline-block;
-        padding: 10px 20px;
-        margin: 5px;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        text-decoration: none;
-    }
-    .btn-primary {
-        background: #1976d2;
-        color: white;
-    }
-    .btn-secondary {
-        background: #757575;
-        color: white;
-    }
-</style>
+<script>
+function copyId(i){
+    var $temp = $("<input>");
+    $("body").append($temp);
+    $temp.val(i).select();
+    document.execCommand("copy");
+    $temp.remove();
+    $('#copied').show().delay(2500).slideUp(400);
+}
+
+$(document).ready(function(){
+    $('#t{{ obj.t }}').focus();
+});
+</script>
+</div>
 {% endblock %}
