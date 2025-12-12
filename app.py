@@ -235,13 +235,64 @@ def delete_object(db_name, obj_id):
 
 @app.route('/api/<db_name>/objects', methods=['GET', 'POST'])
 def api_objects(db_name):
-    """API endpoint for objects"""
+    """API endpoint for objects with filtering support"""
     if request.method == 'GET':
         with Database(db_name) as db:
             limit = request.args.get('limit', Config.DEFAULT_LIMIT, type=int)
             offset = request.args.get('offset', 0, type=int)
-            objects = db.get_records(db_name, limit=limit, offset=offset)
-            return jsonify(objects)
+
+            # Check for filters in request or session
+            filters = None
+            save_filters = request.args.get('save_filters', 'true').lower() == 'true'
+
+            # Parse filters from query parameters
+            # Format: filter[field_id][filter_type]=value
+            # Example: filter[3][F]=test&filter[13][FR]=0&filter[13][TO]=100
+            parsed_filters = {}
+            for key, value in request.args.items():
+                if key.startswith('filter['):
+                    # Extract field_id and filter_type from filter[field_id][filter_type]
+                    import re
+                    match = re.match(r'filter\[(\d+)\]\[(\w+)\]', key)
+                    if match:
+                        field_id = int(match.group(1))
+                        filter_type = match.group(2)
+
+                        if field_id not in parsed_filters:
+                            parsed_filters[field_id] = {}
+                        parsed_filters[field_id][filter_type] = value
+
+            # Use parsed filters if provided, otherwise check session
+            if parsed_filters:
+                filters = parsed_filters
+                if save_filters:
+                    # Save filters to session
+                    session[f'{db_name}_filters'] = filters
+            elif f'{db_name}_filters' in session:
+                filters = session[f'{db_name}_filters']
+
+            # Clear filters if requested
+            if request.args.get('clear_filters') == 'true':
+                if f'{db_name}_filters' in session:
+                    del session[f'{db_name}_filters']
+                filters = None
+
+            # Get objects with optional filtering
+            if filters:
+                objects = db.get_records_filtered(
+                    db_name,
+                    filters=filters,
+                    limit=limit,
+                    offset=offset
+                )
+            else:
+                objects = db.get_records(db_name, limit=limit, offset=offset)
+
+            return jsonify({
+                'objects': objects,
+                'filters': filters,
+                'count': len(objects)
+            })
 
     elif request.method == 'POST':
         data = request.get_json()
