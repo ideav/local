@@ -53,6 +53,17 @@ def before_request():
         session['locale'] = request.cookies.get(f'{db_name}_locale',
                                                 request.cookies.get('my_locale', 'EN'))
 
+    # Generate XSRF token for session if not exists
+    if 'xsrf_token' not in session:
+        # Use user token if authenticated, otherwise use remote address
+        token = request.cookies.get(db_name) or request.remote_addr or 'guest'
+        session['xsrf_token'] = xsrf_token(token, db_name)
+
+    # Validate XSRF token on POST requests (except auth and API endpoints)
+    if request.method == 'POST' and not is_api_request(request) and request.path != '/auth':
+        if not validate_xsrf():
+            return t9n("[RU]Неверный или устаревший токен CSRF<br/>[EN]Invalid or expired CSRF token"), 403
+
 
 @app.route('/')
 @app.route('/<db_name>')
@@ -444,6 +455,16 @@ def api_object(db_name, obj_id):
             return jsonify({'success': True})
 
 
+def validate_xsrf():
+    """Validate XSRF token from POST request"""
+    submitted_token = request.form.get('_xsrf')
+    session_token = session.get('xsrf_token')
+
+    if submitted_token and session_token and submitted_token == session_token:
+        return True
+    return False
+
+
 def verify_auth(db_name):
     """Verify user authentication"""
     token = request.cookies.get(db_name)
@@ -560,7 +581,11 @@ def auth():
                             f'INSERT INTO {db_name} (t, up, ord, val) VALUES ({Config.TOKEN}, %s, 1, %s)',
                             (result['user_id'], token), commit=True
                         )
-                    
+
+                    # Generate XSRF token for this session
+                    session['xsrf_token'] = xsrf_token(token, db_name)
+                    session['user_id'] = result['user_id']
+
                     response = redirect(f'/{db_name}')
                     response.set_cookie(db_name, token, max_age=31536000, path='/')
                     return response
