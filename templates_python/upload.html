@@ -7,6 +7,7 @@
     <h2>Upload File</h2>
 
     <form method="post" enctype="multipart/form-data">
+        <input type="hidden" name="_xsrf" value="{{ session.xsrf_token or '' }}">
         <div class="form-group">
             <label for="file">Select file:</label>
             <input type="file" id="file" name="file" required class="form-control">
