@@ -2,35 +2,30 @@
 
 {% block title %}Object {{ obj.id }} - IdeaV{% endblock %}
 
-{% block content %}
-<div class="object-view">
-    <h2>Object: {{ obj.val }}</h2>
+{% block extra_css %}
+<script src="/js/freeze-table.js"></script>
+<style>
+    th { font-weight: normal; }
+    .hidden { display: none !important; }
+</style>
+{% endblock %}
 
-    <div class="object-details">
-        <table>
-            <tr>
-                <th>ID:</th>
-                <td>{{ obj.id }}</td>
-            </tr>
-            <tr>
-                <th>Type:</th>
-                <td>{{ obj.t }}</td>
-            </tr>
-            <tr>
-                <th>Parent:</th>
-                <td>
-                    {% if obj.up > 0 %}
-                    <a href="/{{ db_name }}/object/{{ obj.up }}">{{ obj.up }}</a>
-                    {% else %}
-                    ROOT
-                    {% endif %}
-                </td>
-            </tr>
-            <tr>
-                <th>Value:</th>
-                <td>{{ obj.val }}</td>
-            </tr>
-        </table>
+{% block content %}
+<div class="alert alert-warning hidden" id="warn" role="alert"></div>
+
+<div id="controls" style="z-index: 99; position: relative;" class="controls hidden">
+    <div class="controls-left">
+        <a onclick="$('#add').toggleClass('hidden');$('#controls').toggleClass('hidden');byId('t{{ obj.t }}').focus()" title="Create"><img class="icon8 icon8-0" src="https://img.icons8.com/ios/30/6495ED/plus.png"/></a>
+        <a onclick="sendForm()" title="Refresh"><img class="icon8 icon8-0" src="https://img.icons8.com/ios/30/6495ED/refresh.png"/></a>
+        <a onclick="tbCompact(false)" id="resize" class="hidden" title="Broad cell mode"><img class="icon8 icon8-0" src="https://img.icons8.com/ios/30/6495ED/resize.png"/></a>
+        <a onclick="tbCompact(true)" id="collapse" title="Compact cell mode"><img class="icon8 icon8-0" src="https://img.icons8.com/ios/30/6495ED/collapse.png"/></a>
+        <a onclick="if(byId('filter_row').classList.contains('hidden')) $('.filter_row').removeClass('hidden');else sendForm()" title="Show / apply filter"><img class="icon8 icon8-0" src="https://img.icons8.com/ios/30/6495ED/filter.png"/></a>
+        <a href="/{{ db_name }}/object/{{ obj.id }}" title="Clear the filter and sort"><img class="icon8 icon8-0" src="https://img.icons8.com/ios/30/6495ED/clear-filters.png"/></a>
+        <a title="References" onclick="byId('lnx').value=byId('lnx').value^1;sendForm()"><img class="icon8 icon8-0" src="https://img.icons8.com/ios/30/6495ED/flow-chart.png"/></a>
+        <a title="Compact table mode" onclick="fun2('tb')"><img class="icon8 icon8-0" src="https://img.icons8.com/ios/30/6495ED/grid.png"/></a>
+        <a title="Display full cell content" onclick="byId('full').value=byId('full').value?'':1;sendForm()"><img id="fullbtn" class="icon8 icon8-0" src="https://img.icons8.com/ios/30/6495ED/view-details.png"/></a>
+        <a title="Export CSV format" onclick="byId('exp').name='csv';sendForm()"><img class="icon8 icon8-0" src="https://img.icons8.com/ios/30/6495ED/export-csv.png"/></a>
+        <a title="Delete the selection" onclick="$('#controls').toggleClass('hidden');$('#confirm_del').toggleClass('hidden')"><img class="icon8 icon8-0" src="https://img.icons8.com/ios/30/6495ED/delete.png"/></a>
     </div>
 
     <div class="actions">
@@ -42,6 +37,17 @@
             <button type="submit" class="btn btn-danger">Delete</button>
         </form>
     </div>
+</div>
+
+<TABLE id="confirm_del" class="controls hidden">
+    <TR>
+        <TD>
+        <b>Confirm to delete the records&nbsp;&nbsp;&nbsp;&nbsp;</b>
+        <button type="button" class="btn btn-sm btn-warning" onclick="byId('form').method='post';byId('exp').name='_m_del_select';sendForm('post')">&nbsp;Yes, delete&nbsp;</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="$('#controls').toggleClass('hidden'); $('#confirm_del').toggleClass('hidden');">&nbsp;Cancel&nbsp;</button>
+        </td>
+    </tr>
+</table>
 
     {% if can_create %}
     <div id="create-form" class="create-form" style="display: none;">
@@ -97,39 +103,134 @@
             </tbody>
         </table>
     </div>
-    {% endif %}
+</div>
+</FORM>
 </div>
 
-<style>
-    .object-view {
-        padding: 20px;
+<FORM id="form" class="freeze-table" method="get" ENCTYPE="multipart/form-data" action="/{{ db_name }}/object/{{ obj.id }}" onsubmit="sendForm()">
+<div id="tableContainer">
+<TABLE id="tb" class="table tb table-bordered">
+    <thead>
+    <tr>
+        <th BGCOLOR="#E8F4FC" ALIGN="center" OnClick="$('.filter_row').toggleClass('hidden');"><A title="{{ obj.id }}" colid="val" HREF="/{{ db_name }}/object/{{ obj.id }}/?order_val=val" OnClick="event.stopPropagation();">{{ obj.val }}</A></th>
+        {% for child in children %}
+        {% if loop.first %}
+        <th BGCOLOR="#E8F4FC" ALIGN="center" OnClick="$('.filter_row').toggleClass('hidden');"><A title="{{ child.t }}" colid="{{ child.t }}" HREF="/{{ db_name }}/object/{{ obj.id }}/?order_val={{ child.t }}" OnClick="event.stopPropagation();">Type</A></th>
+        <th BGCOLOR="#E8F4FC" OnClick="$('.filter_row').toggleClass('hidden');">&nbsp;</th>
+        {% endif %}
+        {% endfor %}
+    </tr>
+    </thead>
+    <tbody>
+    <TR id="filter_row" class="filter_row hidden">
+        <th BGCOLOR="#E8F4FC" style="padding:0px;" align="center">
+            <input type="text" name="F_val" value="" size="2" style="width:100%;">
+        </th>
+        <th BGCOLOR="#E8F4FC" style="padding:0px;" align="center">
+            <input type="text" name="F_t" value="" size="2" style="width:100%;">
+        </th>
+        <TD BGCOLOR="#E8F4FC" style="padding:0px;">&nbsp;</TD>
+    </TR>
+    {% for child in children %}
+    <TR>
+        <th ALIGN="left"><A style="display:block" HREF="/{{ db_name }}/edit_obj/{{ child.id }}" TITLE="Edit">{{ child.val }}</A></th>
+        <TD ALIGN="left">{{ child.t }}&nbsp;</TD>
+        <TD ALIGN="CENTER" style="padding:1px; white-space:nowrap;">
+            <A href="#" onclick="post('_m_del/{{ child.id }}?up={{ obj.t }}&f_u={{ obj.id }}')" TITLE="Delete"><img class="icon8 icon8-0" src="https://img.icons8.com/ios/25/ee0000/delete-sign.png"></A>
+        </TD>
+    </TR>
+    {% endfor %}
+    </tbody>
+</TABLE>
+</div>
+
+<input type="hidden" name="F_I" value="">
+<input type="hidden" name="F_U" value="{{ obj.id }}">
+<input type="hidden" id="exp" name="" value="1">
+<input type="hidden" id="lnx" name="lnx" value="0">
+<input type="hidden" id="full" name="full" value="">
+<input type="hidden" id="order_val" name="order_val" value="">
+<input type="hidden" id="desc" name="desc" value="">
+<input type="hidden" name="_xsrf" value="{{ session.xsrf_token or '' }}">
+<input type="submit" name="prompt" class="btn btn-sm btn-primary hidden">
+</FORM>
+
+<script>
+var state=false;
+function sendForm(method){
+    var dupes=[];
+    $('#form').find('input, textearea, select').each(function(){
+        if(this.value==''||(this.name=='_xsrf' && method!='post'))
+            $(this).remove();
+        if(dupes[this.name]!==undefined)
+            $(this).remove();
+        else
+            dupes[this.name]=1;
+    });
+    byId('form').onsubmit='';
+    byId('form').submit();
+}
+
+function icon8(v) {
+    document.cookie = 'icon8='+v+'; path=/'+db+'; max-age=31622400'
+    var iconsCollection = document.querySelectorAll('.icon8');
+    iconsCollection.forEach(icon => {
+        icon.attributes['src'].value = icon.attributes['src'].value.replace(/(img\.icons8\.com\/).+?(\/)/,'$1'+v+'$2')
+    })
+}
+
+function icon8color(el) {
+    el.style.backgroundColor='#'+el.value;
+    document.cookie = 'icon8color='+el.value+'; path=/'+db+'; max-age=31622400'
+    var iconsCollection = document.querySelectorAll('.icon8');
+    iconsCollection.forEach(icon => {
+        icon.attributes['src'].value = icon.attributes['src'].value.replace(/(\/30\/).{6,6}(\/)/,'$1'+el.value+'$2')
+    })
+    document.getElementById('controls').classList.contains('hidden') &&
+        $('#controls').toggleClass('hidden')
+}
+
+function recalculateTable(mode) {
+    let options = {
+        'scrollBar': true,
+        'shadow': true,
+        'fixedNavbar': '.controls'
     }
-    .object-details table {
-        width: 100%;
-        max-width: 600px;
-        margin: 20px 0;
+
+    if (mode === 'compact') {
+        options.freezeColumn = false;
     }
-    .object-details th {
-        text-align: left;
-        padding: 10px;
-        background: #f5f5f5;
-        width: 150px;
+    $(function() {
+        $('#tableContainer').freezeTable(options);
+    });
+}
+
+function tbCompact(mode){
+    if(mode){
+        byId("tb").classList.add('table-sm');
+        $('#collapse').toggleClass('hidden');
+        $('#resize').toggleClass('hidden');
+        document.cookie='table-sm=1; path=/'+db+'/object/{{ obj.id }}; max-age=31622400';
+        recalculateTable();
     }
-    .object-details td {
-        padding: 10px;
+    else{
+        byId("tb").classList.remove('table-sm');
+        $('#resize').toggleClass('hidden');
+        $('#collapse').toggleClass('hidden');
+        document.cookie='table-sm=1; path=/'+db+'/object/{{ obj.id }}; max-age=0';
+        recalculateTable();
     }
-    .btn {
-        display: inline-block;
-        padding: 10px 20px;
-        margin: 5px;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        text-decoration: none;
+}
+
+var compactTogglerStyle =  `
+@media screen and (max-width:800px){
+    td, th {
+        display: block;
+        float: left;
+        border: 1px solid #c8c8c8;
     }
-    .btn-primary {
-        background: #1976d2;
-        color: white;
+    tr {
+        border: 1px solid #c8c8c8;
     }
     .btn-success {
         background: #388e3c;
@@ -173,14 +274,73 @@
         border-collapse: collapse;
         margin-top: 20px;
     }
-    .data-table th,
-    .data-table td {
-        border: 1px solid #ddd;
-        padding: 8px;
-        text-align: left;
+    .clone-scroll-bar-wrap {
+        pointer-events: none;
     }
-    .data-table th {
-        background: #f5f5f5;
+`
+
+var compactMode = (tableID) => {
+    var table = document.getElementById(tableID)
+    table.classList.add('table-sm')
+    var tbHeader = table.childNodes[1]
+    var tbBody = table.childNodes[3]
+    var headerCollection = tbHeader.childNodes[1].childNodes
+    var rowCollection = tbBody.childNodes
+    var thWidthes = {};
+    var tdWidthes = {};
+    headerCollection.forEach((th, index) => {
+        if (th.offsetWidth) {
+            thWidthes[index] = th.offsetWidth;
+        }
+    })
+
+    rowCollection.forEach((row, k) => {
+        if (row.offsetWidth && !row.id.length) {
+            row.childNodes.forEach((child, i) => {
+                if (child.offsetWidth) {
+                    if (!tdWidthes[i] || tdWidthes[i] < child.offsetWidth) {
+                        tdWidthes[i] = child.offsetWidth
+                    }
+                }
+            })
+            row.childNodes.forEach((child, i) => {
+                if (child.offsetWidth && thWidthes[i] > child.offsetWidth) {
+                    child.style.width = `${thWidthes[i]}px`
+                } else if (headerCollection[i] && headerCollection[i].offsetWidth) {
+                        headerCollection[i].style.width = `${tdWidthes[i]}px`
+                }
+            })
+        }
+    })
+    var thNodes = document.querySelectorAll('#tb thead th');
+    thNodes.forEach((node, index) => {
+        if (thNodes[index + 1] && (thNodes[index + 1].offsetTop !== node.offsetTop)) {
+            node.style.width = `${node.offsetWidth + (node.parentNode.offsetWidth - node.offsetWidth - node.offsetLeft)}px`
+        } else if (index === thNodes.length - 1) {
+            node.style.width = `${node.offsetWidth + (node.parentNode.offsetWidth - node.offsetWidth - node.offsetLeft)}px`
+        }
+    })
+}
+
+function fun2(id) {
+    let table = document.getElementById(id);
+    var style = document.createElement('style')
+        if (!state) {
+            style.innerText = compactTogglerStyle;
+            document.head.appendChild(style)
+            compactMode(id);
+            compactMode(id);
+            compactMode(id);
+            recalculateTable('compact');
+            state = true;
+            table.classList.add("striped-table");
+        }
+        else {
+            table.classList.add('table')
+            document.head.removeChild(document.head.lastChild);
+            recalculateTable();
+            state = false;
+        }
     }
 </style>
 
