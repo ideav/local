@@ -22,6 +22,9 @@ CORS(app, origins=Config.CORS_ALLOW_ORIGIN,
      allow_headers=Config.CORS_ALLOW_HEADERS,
      methods=Config.CORS_ALLOW_METHODS)
 
+# Make t9n() available in all templates
+app.jinja_env.globals.update(t9n=t9n)
+
 
 @app.before_request
 def before_request():
@@ -530,7 +533,7 @@ def auth():
     password = request.form.get('password', '')
     
     if not email or not password:
-        return render_template('login.html', db_name=db_name, error='Введите email и пароль')
+        return render_template('login.html', db_name=db_name, error=t9n('[RU]Введите email и пароль[EN]Enter email and password'))
     
     try:
         with Database(db_name) as db:
@@ -565,11 +568,11 @@ def auth():
                     response.set_cookie(db_name, token, max_age=31536000, path='/')
                     return response
             
-            return render_template('login.html', db_name=db_name, error='Неверный email или пароль')
+            return render_template('login.html', db_name=db_name, error=t9n('[RU]Неверный email или пароль[EN]Invalid email or password'))
             
     except Exception as e:
         write_log(f'Auth error: {e}', 'error', db_name)
-        return render_template('login.html', db_name=db_name, error='Ошибка авторизации')
+        return render_template('login.html', db_name=db_name, error=t9n('[RU]Ошибка авторизации[EN]Authentication error'))
 
 
 @app.route('/login')
@@ -586,4 +589,28 @@ def logout(db_name):
     session.clear()
     response = redirect(url_for('login_page', db=db_name))
     response.delete_cookie(db_name)
+    return response
+
+
+@app.route('/<db_name>/set_locale/<locale>')
+def set_locale(db_name, locale):
+    """Set language preference"""
+    # Validate locale
+    if locale not in ['RU', 'EN']:
+        locale = 'EN'
+
+    # Store in session
+    session['locale'] = locale
+
+    # Redirect back to referrer or home
+    referrer = request.referrer
+    if referrer and db_name in referrer:
+        response = redirect(referrer)
+    else:
+        response = redirect(url_for('index', db_name=db_name))
+
+    # Set cookie for persistence
+    response.set_cookie(f'{db_name}_locale', locale, max_age=31536000, path='/')
+    response.set_cookie('my_locale', locale, max_age=31536000, path='/')
+
     return response

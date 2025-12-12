@@ -117,10 +117,41 @@ def builtin_value(value):
     return value
 
 
-def t9n(message, locale='EN'):
-    """Simple translation function"""
+def t9n(message, locale=None):
+    """
+    Translation function for multilingual support.
+    Extracts locale-specific text from message.
+    Format: [RU]Russian text[EN]English text
+
+    Args:
+        message: String containing [LOCALE]text markers
+        locale: Optional locale override (RU or EN). If not provided, uses session/cookie locale.
+
+    Returns:
+        Translated string for the current locale
+    """
+    # Get locale from session/request if not provided
+    if locale is None:
+        try:
+            from flask import session, request
+            # Try to get locale from session (set by before_request)
+            if 'locale' in session:
+                locale = session['locale']
+            # Fallback to cookie
+            elif request:
+                db_name = getattr(request, 'db_name', 'ideav')
+                locale = request.cookies.get(f'{db_name}_locale',
+                                            request.cookies.get('my_locale', 'EN'))
+            else:
+                locale = 'EN'
+        except (ImportError, RuntimeError):
+            # Not in Flask context (e.g., during testing)
+            locale = 'EN'
+
+    # Normalize locale to uppercase
+    locale = locale.upper() if locale else 'EN'
+
     # Extract locale-specific text from message
-    # Format: [RU]Russian text[EN]English text
     locale_pattern = f'\\[{locale}\\]'
     match = re.search(f'{locale_pattern}(.*?)(?:\\[[A-Z]{{2}}\\]|$)', message, re.DOTALL)
 
