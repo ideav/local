@@ -136,6 +136,7 @@
         <th ALIGN="left"><A style="display:block" HREF="/{{ db_name }}/edit_obj/{{ child.id }}" TITLE="Edit">{{ child.val }}</A></th>
         <TD ALIGN="left">{{ child.t }}&nbsp;</TD>
         <TD ALIGN="CENTER" style="padding:1px; white-space:nowrap;">
+            <A HREF="#" onclick="post('_m_up/{{ child.id }}')" TITLE="Move up"><img class="icon8 icon8-0" src="https://img.icons8.com/ios/25/222222/up.png"></A>
             <A href="#" onclick="post('_m_del/{{ child.id }}?up={{ obj.t }}&f_u={{ obj.id }}')" TITLE="Delete"><img class="icon8 icon8-0" src="https://img.icons8.com/ios/25/ee0000/delete-sign.png"></A>
         </TD>
     </TR>

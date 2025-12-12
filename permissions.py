@@ -362,6 +362,28 @@ class PermissionSystem:
             return False
         return True
 
+    def has_delete_grant(self, type_id):
+        """
+        Check if user has DELETE permission for a specific type.
+
+        This checks the grants['DELETE'][type_id] structure from PHP.
+
+        Args:
+            type_id: Type ID to check delete permission for
+
+        Returns:
+            bool: True if user has delete grant for this type
+        """
+        # Admin always has delete permission
+        if self.user == "admin" or self.user == self.db_name:
+            return True
+
+        # Check if DELETE grants exist and type_id is in them
+        if 'DELETE' in self.grants:
+            return type_id in self.grants['DELETE']
+
+        return False
+
 
 # Global permission check functions for use in routes
 def get_permission_system(db_name):

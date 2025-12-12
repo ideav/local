@@ -106,6 +106,10 @@ def view_object(db_name, obj_id):
         except PermissionError as e:
             return str(e), 403
 
+        # Check if CSV export is requested
+        if 'csv' in request.args:
+            return export_objects_csv(db, db_name, obj_id, obj.get('t', 0))
+
         # Get object children
         children = db.get_records(db_name, {'up': obj_id})
 
@@ -565,6 +569,134 @@ def delete_object(db_name, obj_id):
         return redirect(url_for('index', db_name=db_name))
 
 
+@app.route('/<db_name>/object/<int:obj_id>/', methods=['POST'])
+def batch_delete_objects(db_name, obj_id):
+    """
+    Batch delete objects matching current filters.
+    This implements the _m_del_select functionality from PHP.
+    """
+    if not verify_auth(db_name):
+        return redirect(url_for('login_page', db=db_name))
+
+    # Check if this is a batch delete request
+    if '_m_del_select' not in request.form:
+        return redirect(url_for('view_object', db_name=db_name, obj_id=obj_id))
+
+    # Get permission system
+    perm_sys = get_permission_system(db_name)
+    if not perm_sys:
+        return redirect(url_for('login_page', db=db_name))
+
+    with Database(db_name) as db:
+        # Get the object type
+        obj = db.get_record(db_name, obj_id)
+        if not obj:
+            return "Object not found", 404
+
+        cur_typ = obj.get('t', 0)
+
+        # Check bulk delete permission
+        user_name = session.get('user_name', '')
+        if not perm_sys.has_delete_grant(cur_typ) and user_name != 'admin' and user_name != db_name:
+            return t9n("[RU]У вас нет прав на массовое удаление объектов этого типа[EN]You do not have access to delete this type of object in bulk"), 403
+
+        # Build filter query to get IDs to delete
+        # Get all request parameters for filters
+        filters = {}
+        for key, value in request.form.items():
+            if key.startswith('F_') and value:
+                # Extract field type from F_<type> format
+                field_id = key[2:]
+                if field_id.isdigit():
+                    filters[int(field_id)] = {'F': value}
+
+        # Query to get filtered objects (excluding those with references)
+        # This matches the PHP logic at line 3916-3917
+        query = f"""
+            SELECT DISTINCT vals.id
+            FROM `{db_name}` vals
+            LEFT JOIN `{db_name}` refr ON refr.t = vals.id
+            WHERE vals.t = %s AND refr.id IS NULL
+        """
+        params = [cur_typ]
+
+        # Add filter conditions if any
+        if filters:
+            # Note: For simplicity, we're doing basic filtering here
+            # Full filter implementation would use the filters.py module
+            for field_id, filter_val in filters.items():
+                if 'F' in filter_val:
+                    query += f" AND vals.val LIKE %s"
+                    params.append(f"%{filter_val['F']}%")
+
+        # Execute and get IDs to delete
+        ids_to_delete = db.execute(query, tuple(params))
+
+        if ids_to_delete:
+            record_ids = [row['id'] for row in ids_to_delete]
+            # Use batch delete
+            db.batch_delete(db_name, record_ids)
+
+        # Redirect back to the object view
+        return redirect(url_for('view_object', db_name=db_name, obj_id=obj_id))
+
+
+@app.route('/<db_name>/_m_up/<int:obj_id>', methods=['POST'])
+def move_up_object(db_name, obj_id):
+    """
+    Move an object up in the ordering.
+    This implements the _m_up functionality from PHP.
+    """
+    if not verify_auth(db_name):
+        return redirect(url_for('login_page', db=db_name))
+
+    # Get permission system
+    perm_sys = get_permission_system(db_name)
+    if not perm_sys:
+        return redirect(url_for('login_page', db=db_name))
+
+    with Database(db_name) as db:
+        # Check permission for WRITE access
+        try:
+            perm_sys.check_grant(obj_id, 0, "WRITE", fatal=True)
+        except PermissionError as e:
+            return str(e), 403
+
+        # Get current object with its order and find the previous item
+        query = f"""
+            SELECT obj.t, obj.up, obj.ord, MAX(peers.ord) as new_ord
+            FROM `{db_name}` obj
+            LEFT JOIN `{db_name}` peers ON peers.up = obj.up
+                AND peers.t = obj.t
+                AND peers.ord < obj.ord
+            WHERE obj.id = %s
+        """
+        result = db.execute_one(query, (obj_id,))
+
+        if not result:
+            return "Object not found", 404
+
+        up = result['up']
+        t = result['t']
+        current_ord = result['ord']
+        new_ord = result.get('new_ord')
+
+        if new_ord:
+            # Swap the ord values
+            swap_query = f"""
+                UPDATE `{db_name}`
+                SET ord = CASE
+                    WHEN ord = %s THEN %s
+                    WHEN ord = %s THEN %s
+                END
+                WHERE up = %s AND (ord = %s OR ord = %s)
+            """
+            db.execute(swap_query, (current_ord, new_ord, new_ord, current_ord, up, current_ord, new_ord), commit=True)
+
+        # Redirect back to parent object view
+        return redirect(url_for('view_object', db_name=db_name, obj_id=up))
+
+
 @app.route('/api/<db_name>/objects', methods=['GET', 'POST'])
 def api_objects(db_name):
     """API endpoint for objects"""
@@ -720,14 +852,65 @@ def api_object(db_name, obj_id):
             return jsonify({'success': True})
 
 
-def validate_xsrf():
-    """Validate XSRF token from POST request"""
-    submitted_token = request.form.get('_xsrf')
-    session_token = session.get('xsrf_token')
+def export_objects_csv(db, db_name, obj_id, cur_typ):
+    """
+    Export filtered objects to CSV format.
+    This implements basic CSV export functionality.
 
-    if submitted_token and session_token and submitted_token == session_token:
-        return True
-    return False
+    Args:
+        db: Database connection
+        db_name: Database name
+        obj_id: Object ID
+        cur_typ: Current type
+
+    Returns:
+        Flask response with CSV file
+    """
+    import csv
+    import io
+    from flask import make_response
+
+    # Build filter query to get objects to export
+    filters = {}
+    for key, value in request.args.items():
+        if key.startswith('F_') and value:
+            field_id = key[2:]
+            if field_id.isdigit():
+                filters[int(field_id)] = {'F': value}
+
+    # Query to get filtered objects
+    query = f"SELECT vals.id, vals.val FROM `{db_name}` vals WHERE vals.t = %s"
+    params = [cur_typ]
+
+    # Add filter conditions if any
+    if filters:
+        for field_id, filter_val in filters.items():
+            if 'F' in filter_val:
+                query += f" AND vals.val LIKE %s"
+                params.append(f"%{filter_val['F']}%")
+
+    query += " ORDER BY vals.id"
+
+    # Execute query
+    objects = db.execute(query, tuple(params))
+
+    # Create CSV in memory
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Write header
+    writer.writerow(['ID', 'Value'])
+
+    # Write data rows
+    for obj in objects:
+        writer.writerow([obj['id'], obj['val']])
+
+    # Create response
+    response = make_response(output.getvalue())
+    response.headers['Content-Type'] = 'text/csv'
+    response.headers['Content-Disposition'] = f'attachment; filename=data_export_{obj_id}.csv'
+
+    return response
 
 
 def verify_auth(db_name):
