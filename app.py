@@ -8,6 +8,7 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from config import Config
 from database import Database
+from report_compiler import ReportCompiler
 from utils import (
     check_db_name, is_api_request, blacklist_extension,
     get_subdir, get_filename, write_log, generate_token,
@@ -146,20 +147,41 @@ def view_report(db_name, report_id):
     if not verify_auth(db_name):
         return redirect(url_for('login_page', db=db_name))
 
-    with Database(db_name) as db:
-        # Get report definition
-        report = db.get_record(db_name, report_id)
-        if not report:
-            return "Report not found", 404
+    try:
+        with Database(db_name) as db:
+            # Use ReportCompiler to build and execute the report
+            compiler = ReportCompiler(db, db_name)
 
-        # Execute report query (simplified)
-        # In full implementation, this would build and execute SQL from report definition
-        results = []
+            # Get request parameters for filtering, sorting, etc.
+            request_params = {}
+            if request.args.get('SELECT'):
+                request_params['SELECT'] = request.args.get('SELECT')
+            if request.args.get('TOTALS'):
+                request_params['TOTALS'] = request.args.get('TOTALS')
+            if request.args.get('LIMIT'):
+                request_params['LIMIT'] = request.args.get('LIMIT')
 
-        return render_template('report.html',
-                             report=report,
-                             results=results,
-                             db_name=db_name)
+            # Add all FR_* and TO_* filter parameters
+            for key in request.args:
+                if key.startswith('FR_') or key.startswith('TO_'):
+                    request_params[key] = request.args.get(key)
+
+            # Compile and execute the report
+            report_data = compiler.compile_report(
+                report_id,
+                execute=True,
+                check_grant=False,
+                request_params=request_params
+            )
+
+            return render_template('report.html',
+                                 report=report_data,
+                                 results=report_data.get('results', []),
+                                 db_name=db_name)
+
+    except Exception as e:
+        write_log(f"Report error: {e}", "error", db_name)
+        return f"Error generating report: {str(e)}", 500
 
 
 @app.route('/<db_name>/upload', methods=['GET', 'POST'])
